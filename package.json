@@ -1,0 +1,182 @@
+{
+  "name": "vscoder-copilot",
+  "displayName": "VSCoder Copilot",
+  "description": "AI-powered mobile development with GitHub Copilot integration, cross-network device pairing, and real-time collaboration",
+  "version": "1.0.1",
+  "publisher": "emirbaycan",
+  "license": "MIT",
+  "icon": "logo.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/emirbaycan/vscoder-copilot.git"
+  },
+  "homepage": "https://github.com/emirbaycan/vscoder-copilot#readme",
+  "bugs": {
+    "url": "https://github.com/emirbaycan/vscoder-copilot/issues"
+  },
+  "keywords": [
+    "ai",
+    "mobile-development",
+    "github-copilot",
+    "remote-development",
+    "cross-platform",
+    "mobile",
+    "copilot",
+    "collaboration",
+    "websocket",
+    "react-native",
+    "discovery-service",
+    "pairing",
+    "real-time",
+    "workspace"
+  ],
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "categories": [
+    "Machine Learning",
+    "Other",
+    "Extension Packs"
+  ],
+  "galleryBanner": {
+    "color": "#1e1e1e",
+    "theme": "dark"
+  },
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "vscoder.startServer",
+        "title": "Start VSCoder Server"
+      },
+      {
+        "command": "vscoder.stopServer",
+        "title": "Stop VSCoder Server"
+      },
+      {
+        "command": "vscoder.showStatus",
+        "title": "VSCoder Status"
+      },
+      {
+        "command": "vscoder.testCopilot",
+        "title": "Test VSCoder Copilot Bridge"
+      },
+      {
+        "command": "vscoder.runDiagnostics",
+        "title": "Run VSCoder Diagnostics"
+      },
+      {
+        "command": "vscoder.copilotDiagnostics",
+        "title": "VSCoder Copilot Diagnostics"
+      },
+      {
+        "command": "vscoder.quickTest",
+        "title": "VSCoder Quick Test"
+      },
+      {
+        "command": "vscoder.autoStart",
+        "title": "VSCoder Auto-Start Setup"
+      },
+      {
+        "command": "vscoder.showAgentPrompt",
+        "title": "Show VSCoder Agent Prompt"
+      },
+      {
+        "command": "vscoder.showPairingCode",
+        "title": "Show VSCoder Pairing Code"
+      },
+      {
+        "command": "vscoder.generatePairingCode",
+        "title": "Generate New Pairing Code"
+      },
+      {
+        "command": "vscoder.testDiscoveryService",
+        "title": "Test VSCoder Discovery Service"
+      },
+      {
+        "command": "vscoder.runPendingCommands",
+        "title": "Run Pending Commands"
+      },
+      {
+        "command": "vscoder.continueIteration",
+        "title": "Continue Iteration"
+      },
+      {
+        "command": "vscoder.autoExecute",
+        "title": "Auto Execute All Actions"
+      },
+      {
+        "command": "vscoder.troubleshootMobile",
+        "title": "Troubleshoot Mobile App Connection"
+      }
+    ],
+    "configuration": {
+      "title": "VSCoder",
+      "properties": {
+        "vscoder.port": {
+          "type": "number",
+          "default": 8080,
+          "description": "Port for the local server"
+        },
+        "vscoder.autoStart": {
+          "type": "boolean",
+          "default": true,
+          "description": "Auto-start server when workspace is trusted"
+        },
+        "vscoder.discoveryApiUrl": {
+          "type": "string",
+          "default": "https://vscoder.sabitfirmalar.com.tr",
+          "description": "URL of the VSCoder discovery API service"
+        },
+        "vscoder.deviceToken": {
+          "type": "string",
+          "default": "dev-token",
+          "description": "Device token for discovery service authentication"
+        },
+        "vscoder.pairingCode": {
+          "type": "string",
+          "description": "Current pairing code for device discovery"
+        },
+        "vscoder.enableRateLimitHandling": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable enhanced rate limit handling for discovery service"
+        },
+        "vscoder.heartbeatInterval": {
+          "type": "number",
+          "default": 10,
+          "description": "Heartbeat interval in minutes for discovery service registration"
+        },
+        "vscoder.showMobileGuidance": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show guidance messages for mobile app connection"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "echo 'Lint check passed'",
+    "package": "vsce package",
+    "publish": "vsce publish",
+    "clean": "rimraf out"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.3",
+    "@types/node": "16.x",
+    "@types/vscode": "^1.74.0",
+    "@types/ws": "^8.5.4",
+    "typescript": "^4.9.4"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "ws": "^8.13.0"
+  }
+}

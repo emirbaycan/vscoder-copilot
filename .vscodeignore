@@ -1,0 +1,36 @@
+# VS Code Extension ignore file
+.vscode/**
+.vscode-test/**
+out/test/**
+src/**
+**/*.map
+.gitignore
+tsconfig.json
+.eslintrc.json
+**/*.ts
+node_modules/**
+*.vsix
+.nyc_output
+coverage
+
+# Build artifacts
+**/*.js.map
+**/*.d.ts.map
+
+# Test files
+**/test/**
+**/*.test.ts
+**/*.test.js
+
+# Development files
+.vscode-test-web/**
+webpack.config.js
+.eslintrc.js
+
+# Documentation that's not needed in package
+TESTING_GUIDE.md
+TEST_COMMANDS.md
+TROUBLESHOOTING.md
+
+# Dependencies (already bundled)
+package-lock.json
