@@ -2,6 +2,81 @@
 
 All notable changes to the "VSCoder Copilot" extension will be documented in this file.
 
+## [1.0.4] - 2025-08-26
+
+### 🔧 Critical Production Fix - Dependency Packaging
+
+#### 🐛 Critical Bug Fix
+- **Extension Dependencies**: Fixed runtime dependencies not being included in published extension package
+- **Module Resolution**: Resolved "Cannot find module 'express'" and "Cannot find module 'ws'" errors in production
+- **Package Configuration**: Updated `.vscodeignore` to include essential runtime dependencies while excluding development files
+
+#### 📋 Issue Resolved
+- **Production Activation Failure**: Fixed extension failing to start due to missing Express and WebSocket modules
+- **Dependency Exclusion**: Corrected blanket `node_modules/**` exclusion that prevented runtime libraries from being packaged
+- **Package Size Optimization**: Properly balanced package size (908.32KB, 565 files) with required functionality
+
+#### 🔍 Technical Details
+- **Root Cause**: `.vscodeignore` was excluding all node_modules, preventing Express and WS dependencies from being packaged
+- **Solution**: Modified `.vscodeignore` to include production dependencies while excluding development packages
+- **Impact**: Extension now properly activates and functions in production environments after marketplace installation
+
+#### 📦 Package Contents
+- **Included Dependencies**: `express@4.18.2`, `ws@8.13.0` now properly packaged
+- **Package Statistics**: 565 files, 908.32KB total size
+- **Exclusions**: Development dependencies, source TypeScript files, and build artifacts remain excluded
+
+#### ✨ Additional Improvements
+- **Production Logging**: Enhanced error logging to identify marketplace installation issues
+- **Dependency Verification**: Added runtime dependency checks for troubleshooting
+- **Extension Validation**: Improved production environment compatibility testing
+
+## [1.0.3] - 2025-08-26
+
+### 🔧 Production Investigation & Debugging
+
+#### 🐛 Bug Investigation
+- **Command Availability**: Investigated "command not found" errors in production environment
+- **Activation Events**: Tested various activation strategies for marketplace compatibility
+- **Module Loading**: Identified dependency resolution issues through production logging
+
+#### 📋 Analysis Performed
+- **Production Testing**: Comprehensive testing of extension behavior in marketplace environment
+- **Activation Debugging**: Explored multiple activation event configurations
+- **Error Logging**: Enhanced logging to capture production-specific issues
+
+## [1.0.2] - 2025-08-26
+
+### 🔧 Production Compatibility & VS Code API Modernization
+
+#### ✨ Improvements
+- **Modern VS Code API Compliance**: Updated to 2024/2025 VS Code extension standards
+- **Production Compatibility**: Fixed command registration issues in production environments
+- **Enhanced Error Handling**: Added graceful degradation for CopilotBridge initialization failures
+- **Extension Activation**: Improved activation reliability with try-catch error handling
+
+#### 🐛 Bug Fixes
+- **Command Registration**: Fixed "Cannot register property" conflicts between development and production versions
+- **Empty Activation Events**: Modernized to use empty `activationEvents` array for better performance
+- **Command Categories**: Added explicit command categories for better organization in Command Palette
+- **Menu Registration**: Added explicit Command Palette menu registration for core commands
+
+#### 🛠️ Technical Changes
+- **Package.json Modernization**: Updated extension manifest to follow latest VS Code guidelines
+- **Command Palette Integration**: Enhanced command discoverability with proper menu registration
+- **Error Recovery**: Non-blocking error messages for better user experience
+- **Extension Lifecycle**: Improved extension loading and activation process
+
+#### 📦 Configuration Updates
+- **Command Categorization**: All commands now properly categorized under "VSCoder"
+- **Menu Visibility**: Core commands explicitly registered in Command Palette
+- **Activation Performance**: Optimized extension startup with modern activation patterns
+
+#### 🔍 Developer Experience
+- **Development vs Production**: Better separation and conflict resolution
+- **Extension Debugging**: Enhanced error reporting for easier troubleshooting
+- **VS Code Marketplace**: Fully compliant with marketplace publication requirements
+
 ## [1.0.0] - 2025-08-25
 
 ### 🚀 Major Release - Production Ready

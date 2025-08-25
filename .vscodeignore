@@ -8,7 +8,10 @@ src/**
 tsconfig.json
 .eslintrc.json
 **/*.ts
-node_modules/**
+# Include production dependencies (express, ws)
+node_modules/**/@types/**
+node_modules/**/typescript/**
+node_modules/**/tslib/**
 *.vsix
 .nyc_output
 coverage

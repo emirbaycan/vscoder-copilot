@@ -397,6 +397,58 @@ The extension now connects to the **production VSCoder Discovery Service** at `h
 - 🔒 **Secure HTTPS**: Encrypted communication with production service
 - 📡 **Global Access**: Pair devices from anywhere with internet connectivity
 
+## Troubleshooting
+
+### Extension Not Working After Marketplace Installation
+
+If the extension commands are not available after installing from the VS Code marketplace:
+
+1. **Check Extension Activation**: Look for "VSCoder Copilot" in the Extensions view
+2. **Restart VS Code**: Close and reopen VS Code to ensure proper extension loading
+3. **Check Output Panel**: View "VSCoder - Copilot Bridge" output for error messages
+4. **Run Diagnostics**: Use `VSCoder: Run VSCoder Diagnostics` command for system check
+5. **Verify Dependencies**: Extension includes all required dependencies as of v1.0.4+
+
+### Common Issues
+
+#### "Command not found" Errors
+- **Cause**: Extension not properly activated or dependencies missing
+- **Solution**: Update to v1.0.4+ which includes dependency packaging fixes
+- **Workaround**: Restart VS Code and check extension is enabled
+
+#### Server Won't Start
+- **Cause**: Port 8080 already in use or permissions issue
+- **Solution**: Change port in settings or stop conflicting processes
+- **Check**: Run `VSCoder: VSCoder Status` to see detailed error information
+
+#### Mobile App Connection Failed
+- **Cause**: Network connectivity or pairing code issues
+- **Solution**: Use `VSCoder: Troubleshoot Mobile App Connection` command
+- **Alternative**: Generate new pairing code with `VSCoder: Generate New Pairing Code`
+
+#### Copilot Integration Not Working
+- **Cause**: GitHub Copilot extension not installed or authenticated
+- **Solution**: Install GitHub Copilot extension and sign in to GitHub
+- **Test**: Run `VSCoder: Test VSCoder Copilot Bridge` to verify connection
+
+### Production Compatibility
+
+This extension is **production-ready** with:
+
+- ✅ **Marketplace Compatible**: Properly packaged with all runtime dependencies (v1.0.4+)
+- ✅ **Modern VS Code API**: Compatible with VS Code ^1.74.0+ using latest extension standards
+- ✅ **Dependency Packaging**: Express and WebSocket libraries included in published package
+- ✅ **Enterprise Security**: Workspace-scoped file access and secure communication
+- ✅ **Error Handling**: Comprehensive error recovery and diagnostic tools
+- ✅ **Cross-Network Support**: Production-grade discovery service for global device connectivity
+
+### Version History
+
+- **v1.0.4**: **CRITICAL FIX** - Fixed dependency packaging for marketplace installations, resolved production module loading issues
+- **v1.0.3**: Production testing and validation improvements  
+- **v1.0.2**: VS Code API modernization and production compatibility
+- **v1.0.1**: Initial marketplace release with activation event fixes
+
 ### Custom Discovery Service
 
 To use a custom discovery service, configure:

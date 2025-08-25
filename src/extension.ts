@@ -14,22 +14,23 @@ let copilotBridge: CopilotBridge | undefined;
 let pairingCodeStatusBar: vscode.StatusBarItem | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
-    console.log('🚀 VSCoder extension activation started');
-    console.log('📍 Extension context:', {
-        extensionPath: context.extensionPath,
-        globalState: context.globalState,
-        subscriptions: context.subscriptions.length
-    });
-    
-    // Enhanced debugging
-    console.log('🔍 Debug Info:', {
-        vsCodeVersion: vscode.version,
-        workspaceFolders: vscode.workspace.workspaceFolders?.length || 0,
-        workspaceTrusted: vscode.workspace.isTrusted,
-        extensionMode: context.extensionMode
-    });
-    
-    vscode.window.showInformationMessage('🚀 VSCoder extension activated!');
+    try {
+        console.log('🚀 VSCoder extension activation started');
+        console.log('📍 Extension context:', {
+            extensionPath: context.extensionPath,
+            globalState: context.globalState,
+            subscriptions: context.subscriptions.length
+        });
+        
+        // Enhanced debugging
+        console.log('🔍 Debug Info:', {
+            vsCodeVersion: vscode.version,
+            workspaceFolders: vscode.workspace.workspaceFolders?.length || 0,
+            workspaceTrusted: vscode.workspace.isTrusted,
+            extensionMode: context.extensionMode
+        });
+        
+        vscode.window.showInformationMessage('🚀 VSCoder extension activated!');
 
     // Initialize Copilot bridge
     console.log('🔧 Initializing Copilot bridge...');
@@ -38,7 +39,9 @@ export function activate(context: vscode.ExtensionContext) {
         console.log('✅ Copilot bridge initialized successfully');
     } catch (error) {
         console.error('❌ Failed to initialize Copilot bridge:', error);
-        vscode.window.showErrorMessage(`Failed to initialize Copilot bridge: ${error}`);
+        console.warn('⚠️ Extension will continue without Copilot bridge');
+        // Don't show error dialog that could block activation in production
+        copilotBridge = undefined;
     }
 
     // Initialize status bar item for pairing code
@@ -815,6 +818,20 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showErrorMessage(`Failed to register VSCoder commands: ${error}`);
     }
     console.log('🎉 VSCoder extension activation completed!');
+    } catch (error) {
+        console.error('❌ VSCoder extension activation failed:', error);
+        vscode.window.showErrorMessage(`VSCoder extension failed to activate: ${error}. Check Developer Console for details.`);
+        
+        // Register a basic debug command even if activation fails
+        try {
+            const debugCommand = vscode.commands.registerCommand('vscoder.debug', () => {
+                vscode.window.showErrorMessage(`VSCoder activation failed: ${error}`);
+            });
+            context.subscriptions.push(debugCommand);
+        } catch (debugError) {
+            console.error('❌ Failed to register debug command:', debugError);
+        }
+    }
 }
 
 export function deactivate() {

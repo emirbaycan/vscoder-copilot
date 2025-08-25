@@ -2,7 +2,7 @@
   "name": "vscoder-copilot",
   "displayName": "VSCoder Copilot",
   "description": "AI-powered mobile development with GitHub Copilot integration, cross-network device pairing, and real-time collaboration",
-  "version": "1.0.1",
+  "version": "1.0.5",
   "publisher": "emirbaycan",
   "license": "MIT",
   "icon": "logo.png",
@@ -50,69 +50,109 @@
     "commands": [
       {
         "command": "vscoder.startServer",
-        "title": "Start VSCoder Server"
+        "title": "Start VSCoder Server",
+        "category": "VSCoder"
       },
       {
         "command": "vscoder.stopServer",
-        "title": "Stop VSCoder Server"
+        "title": "Stop VSCoder Server",
+        "category": "VSCoder"
       },
       {
         "command": "vscoder.showStatus",
-        "title": "VSCoder Status"
+        "title": "Show Status",
+        "category": "VSCoder"
       },
       {
         "command": "vscoder.testCopilot",
-        "title": "Test VSCoder Copilot Bridge"
+        "title": "Test Copilot Bridge",
+        "category": "VSCoder"
       },
       {
         "command": "vscoder.runDiagnostics",
-        "title": "Run VSCoder Diagnostics"
+        "title": "Run Diagnostics",
+        "category": "VSCoder"
       },
       {
         "command": "vscoder.copilotDiagnostics",
-        "title": "VSCoder Copilot Diagnostics"
+        "title": "Copilot Diagnostics",
+        "category": "VSCoder"
       },
       {
         "command": "vscoder.quickTest",
-        "title": "VSCoder Quick Test"
+        "title": "Quick Test",
+        "category": "VSCoder"
       },
       {
         "command": "vscoder.autoStart",
-        "title": "VSCoder Auto-Start Setup"
+        "title": "Auto-Start Setup",
+        "category": "VSCoder"
       },
       {
         "command": "vscoder.showAgentPrompt",
-        "title": "Show VSCoder Agent Prompt"
+        "title": "Show Agent Prompt",
+        "category": "VSCoder"
       },
       {
         "command": "vscoder.showPairingCode",
-        "title": "Show VSCoder Pairing Code"
+        "title": "Show Pairing Code",
+        "category": "VSCoder"
       },
       {
         "command": "vscoder.generatePairingCode",
-        "title": "Generate New Pairing Code"
+        "title": "Generate New Pairing Code",
+        "category": "VSCoder"
       },
       {
         "command": "vscoder.testDiscoveryService",
-        "title": "Test VSCoder Discovery Service"
+        "title": "Test Discovery Service",
+        "category": "VSCoder"
       },
       {
         "command": "vscoder.runPendingCommands",
-        "title": "Run Pending Commands"
+        "title": "Run Pending Commands",
+        "category": "VSCoder"
       },
       {
         "command": "vscoder.continueIteration",
-        "title": "Continue Iteration"
+        "title": "Continue Iteration",
+        "category": "VSCoder"
       },
       {
         "command": "vscoder.autoExecute",
-        "title": "Auto Execute All Actions"
+        "title": "Auto Execute All Actions",
+        "category": "VSCoder"
       },
       {
         "command": "vscoder.troubleshootMobile",
-        "title": "Troubleshoot Mobile App Connection"
+        "title": "Troubleshoot Mobile App Connection",
+        "category": "VSCoder"
       }
     ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "vscoder.startServer",
+          "when": "true"
+        },
+        {
+          "command": "vscoder.stopServer",
+          "when": "true"
+        },
+        {
+          "command": "vscoder.showStatus",
+          "when": "true"
+        },
+        {
+          "command": "vscoder.showPairingCode",
+          "when": "true"
+        },
+        {
+          "command": "vscoder.troubleshootMobile",
+          "when": "true"
+        }
+      ]
+    },
     "configuration": {
       "title": "VSCoder",
       "properties": {
