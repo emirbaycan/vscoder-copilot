@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { CopilotBridge } from './CopilotBridge';
+import { CopilotBridge } from './copilotBridge';
 
 /**
  * Test utility to verify Copilot bridge functionality

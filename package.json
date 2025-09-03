@@ -2,7 +2,7 @@
   "name": "vscoder-copilot",
   "displayName": "VSCoder Copilot",
   "description": "AI-powered mobile development with GitHub Copilot integration, cross-network device pairing, and real-time collaboration",
-  "version": "1.0.5",
+  "version": "1.2.0",
   "publisher": "emirbaycan",
   "license": "MIT",
   "icon": "logo.png",
@@ -42,9 +42,7 @@
     "color": "#1e1e1e",
     "theme": "dark"
   },
-  "activationEvents": [
-    "onStartupFinished"
-  ],
+  "activationEvents": [],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
@@ -127,6 +125,21 @@
         "command": "vscoder.troubleshootMobile",
         "title": "Troubleshoot Mobile App Connection",
         "category": "VSCoder"
+      },
+      {
+        "command": "vscoder.apiStatus",
+        "title": "Check API Communication Status",
+        "category": "VSCoder"
+      },
+      {
+        "command": "vscoder.testApiConnection",
+        "title": "Test API Connection",
+        "category": "VSCoder"
+      },
+      {
+        "command": "vscoder.sendTestMessage",
+        "title": "Send Test Message to Mobile App",
+        "category": "VSCoder"
       }
     ],
     "menus": {
@@ -168,7 +181,7 @@
         },
         "vscoder.discoveryApiUrl": {
           "type": "string",
-          "default": "https://vscoder.sabitfirmalar.com.tr",
+          "default": "https://api.vscodercopilot.com.tr",
           "description": "URL of the VSCoder discovery API service"
         },
         "vscoder.deviceToken": {
@@ -194,6 +207,25 @@
           "type": "boolean",
           "default": true,
           "description": "Show guidance messages for mobile app connection"
+        },
+        "vscoder.api.url": {
+          "type": "string",
+          "default": "https://api.vscodercopilot.com.tr",
+          "description": "Discovery API server URL for mobile app communication via message broker"
+        },
+        "vscoder.api.pollingInterval": {
+          "type": "number",
+          "default": 3000,
+          "minimum": 1000,
+          "maximum": 30000,
+          "description": "Message polling interval in milliseconds (1000-30000)"
+        },
+        "vscoder.api.timeout": {
+          "type": "number",
+          "default": 10000,
+          "minimum": 5000,
+          "maximum": 60000,
+          "description": "API request timeout in milliseconds (5000-60000)"
         }
       }
     }
@@ -203,6 +235,11 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile && npm run lint",
+    "test": "node test/runner.js",
+    "test:unit": "npm run compile && node test/unit-runner.js",
+    "test:integration": "npm run compile && node test/integration-runner.js",
+    "test:all": "npm run test:unit && npm run test:integration",
+    "test:coverage": "echo 'Coverage report not yet implemented'",
     "lint": "echo 'Lint check passed'",
     "package": "vsce package",
     "publish": "vsce publish",
@@ -213,6 +250,10 @@
     "@types/node": "16.x",
     "@types/vscode": "^1.74.0",
     "@types/ws": "^8.5.4",
+    "@types/mocha": "^10.0.6",
+    "@types/sinon": "^17.0.3",
+    "mocha": "^10.2.0",
+    "sinon": "^17.0.1",
     "typescript": "^4.9.4"
   },
   "dependencies": {

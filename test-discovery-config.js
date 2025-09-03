@@ -12,7 +12,7 @@ console.log('========================================');
 
 // Test the production discovery service URL
 const testDiscoveryService = async () => {
-    const apiUrl = 'https://vscoder.sabitfirmalar.com.tr';
+    const apiUrl = 'https://api.vscodercopilot.com.tr';
     
     console.log(`🔗 Testing connection to: ${apiUrl}`);
     
@@ -33,7 +33,7 @@ const testDiscoveryService = async () => {
         console.error('❌ Discovery Service Test FAILED:', error.message);
         console.log('\n🔍 Troubleshooting:');
         console.log('  - Check internet connection');
-        console.log('  - Verify vscoder.sabitfirmalar.com.tr is accessible');
+        console.log('  - Verify api.vscodercopilot.com.tr is accessible');
         console.log('  - Ensure SSL certificates are valid');
     }
 };

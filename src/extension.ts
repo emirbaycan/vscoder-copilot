@@ -66,10 +66,16 @@ export function activate(context: vscode.ExtensionContext) {
         if (server) {
             const pairingCode = server.getPairingCode();
             const isRegistered = server.getDiscoveryService().isDeviceRegistered();
+            const apiClient = server.getApiClient();
             
             if (pairingCode && isRegistered) {
-                pairingCodeStatusBar.text = `$(device-mobile) ${pairingCode}`;
-                pairingCodeStatusBar.tooltip = `VSCoder Ready!\nPairing Code: ${pairingCode}\nRegistered with discovery service\nClick to copy or get help`;
+                const apiStatus = apiClient ? '🔗' : '📱';
+                pairingCodeStatusBar.text = `$(device-mobile) ${pairingCode} ${apiStatus}`;
+                
+                const connectionType = apiClient ? 'API Communication' : 'Local Network';
+                const connectionUrl = `localhost:${server.getPort()}`;
+                
+                pairingCodeStatusBar.tooltip = `VSCoder Ready!\nPairing Code: ${pairingCode}\nConnection: ${connectionType}\nURL: ${connectionUrl}\nRegistered with discovery service\nClick to copy or get help`;
                 pairingCodeStatusBar.backgroundColor = new vscode.ThemeColor('statusBarItem.prominentBackground');
                 pairingCodeStatusBar.show();
             } else if (pairingCode && !isRegistered) {
@@ -105,7 +111,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
 
         const config = vscode.workspace.getConfiguration('vscoder');
-        const port = config.get<number>('port', 8080);
+        const port = config.get<number>('port', 8080); // Use port 8080 for consistency with mobile app
         console.log('⚙️ Server configuration:', { port });
 
         try {
@@ -482,7 +488,7 @@ export function activate(context: vscode.ExtensionContext) {
                 
                 const discoveryService = server.getDiscoveryService();
                 const config = vscode.workspace.getConfiguration('vscoder');
-                const discoveryApiUrl = config.get<string>('discoveryApiUrl', 'https://vscoder.sabitfirmalar.com.tr');
+                const discoveryApiUrl = config.get<string>('discoveryApiUrl', 'https://api.vscodercopilot.com.tr');
                 
                 // Test the connection with enhanced error handling
                 const controller = new AbortController();
@@ -789,6 +795,92 @@ export function activate(context: vscode.ExtensionContext) {
         });
         console.log('✅ troubleshootMobileCommand registered');
 
+        // API Status command
+        const apiStatusCommand = vscode.commands.registerCommand('vscoder.apiStatus', async () => {
+            if (!server) {
+                vscode.window.showInformationMessage('Server not running');
+                return;
+            }
+            
+            const apiClient = server.getApiClient();
+            if (!apiClient) {
+                vscode.window.showInformationMessage('API client not available');
+                return;
+            }
+            
+            try {
+                const isConnected = await apiClient.testConnection();
+                const queueStatus = await apiClient.getQueueStatus();
+                
+                if (isConnected) {
+                    const statusMessage = queueStatus 
+                        ? `📡 API Connected\nMessages: ${queueStatus.mobileCount} from mobile, ${queueStatus.vscodeCount} to mobile\nActive: ${queueStatus.active ? 'Yes' : 'No'}`
+                        : '📡 API Connected (No queue info available)';
+                    
+                    vscode.window.showInformationMessage(
+                        statusMessage,
+                        'Test Connection',
+                        'Send Test Message'
+                    ).then(selection => {
+                        if (selection === 'Test Connection') {
+                            vscode.commands.executeCommand('vscoder.testApiConnection');
+                        } else if (selection === 'Send Test Message') {
+                            vscode.commands.executeCommand('vscoder.sendTestMessage');
+                        }
+                    });
+                } else {
+                    vscode.window.showWarningMessage(
+                        '⚠️ API Connection Failed - Mobile app communication may not work',
+                        'Retry Connection',
+                        'Check Settings'
+                    ).then(selection => {
+                        if (selection === 'Retry Connection') {
+                            vscode.commands.executeCommand('vscoder.testApiConnection');
+                        } else if (selection === 'Check Settings') {
+                            vscode.commands.executeCommand('workbench.action.openSettings', 'vscoder');
+                        }
+                    });
+                }
+            } catch (error) {
+                vscode.window.showErrorMessage(`API Status Error: ${error}`);
+            }
+        });
+        
+        const testApiConnectionCommand = vscode.commands.registerCommand('vscoder.testApiConnection', async () => {
+            if (!server) {
+                vscode.window.showInformationMessage('Server not running');
+                return;
+            }
+            
+            const apiClient = server.getApiClient();
+            const isConnected = await apiClient.testConnection();
+            
+            if (isConnected) {
+                vscode.window.showInformationMessage('✅ API connection successful!');
+            } else {
+                vscode.window.showErrorMessage('❌ API connection failed');
+            }
+        });
+        
+        const sendTestMessageCommand = vscode.commands.registerCommand('vscoder.sendTestMessage', async () => {
+            if (!server) {
+                vscode.window.showInformationMessage('Server not running');
+                return;
+            }
+            
+            const success = await server.sendMobileNotification(
+                'Test Notification',
+                'This is a test message from VS Code',
+                { timestamp: new Date().toISOString() }
+            );
+            
+            if (success) {
+                vscode.window.showInformationMessage('✅ Test message sent to mobile app!');
+            } else {
+                vscode.window.showErrorMessage('❌ Failed to send test message');
+            }
+        });
+
         // Register all commands with context
         console.log('📋 Registering commands with context...');
         const commands = [
@@ -807,7 +899,10 @@ export function activate(context: vscode.ExtensionContext) {
             runPendingCommandsCommand,
             continueIterationCommand,
             autoExecuteCommand,
-            troubleshootMobileCommand
+            troubleshootMobileCommand,
+            apiStatusCommand,
+            testApiConnectionCommand,
+            sendTestMessageCommand
         ];
         
         context.subscriptions.push(...commands);

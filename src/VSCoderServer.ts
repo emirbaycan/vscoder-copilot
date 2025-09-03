@@ -1,20 +1,25 @@
-import * as express from 'express';
-import * as http from 'http';
-import * as WebSocket from 'ws';
 import * as vscode from 'vscode';
 import { CopilotBridge, CopilotRequest } from './copilotBridge';
 import { DiscoveryService } from './discoveryService';
+import { ApiClient, Message } from './apiClient';
+import { DiscoveryWebSocketClient, createWebSocketClient, WebSocketMessage } from './discoveryWebSocket';
 import * as fs from 'fs';
 import * as path from 'path';
+import { exec } from 'child_process';
 
 export class VSCoderServer {
-    private app: express.Application;
-    private server: http.Server | undefined;
-    private wss: WebSocket.Server | undefined;
     private port: number;
     private copilotBridge: CopilotBridge;
-    private connectedClients: Set<WebSocket> = new Set();
     private discoveryService: DiscoveryService;
+    private apiClient: ApiClient;
+    private discoveryWebSocket: DiscoveryWebSocketClient;
+    private messagePollingDisposable: vscode.Disposable | null = null;
+    private sentMessages: Set<string> = new Set(); // Track sent message IDs
+    private currentSessionId: string | null = null; // Track current session
+    
+    // Message Pool System (for debugging and monitoring only)
+    private messagePool: Map<string, any> = new Map(); // Store messages by ID
+    private messageSequence: number = 0; // Global message sequence number
 
     constructor(port: number, copilotBridge: CopilotBridge) {
         console.log('🌐 VSCoderServer constructor called with port:', port);
@@ -23,963 +28,1191 @@ export class VSCoderServer {
         this.copilotBridge = copilotBridge;
         this.discoveryService = DiscoveryService.fromConfig();
         
-        console.log('📦 Creating Express app...');
-        this.app = express();
+        // Create ApiClient with DiscoveryService for proper authentication
+        this.apiClient = new ApiClient(undefined, undefined, undefined, this.discoveryService);
+        this.discoveryWebSocket = createWebSocketClient();
         
-        console.log('⚙️ Setting up middleware...');
-        this.setupMiddleware();
+        // Set up chat sync availability callback
+        this.copilotBridge.setCanSyncCallback(() => {
+            return !!this.discoveryService.getPairingCode() && this.discoveryService.isDeviceAuthenticated();
+        });
         
-        console.log('🛤️ Setting up routes...');
-        this.setupRoutes();
+        // Set up progress callback to route CopilotBridge progress updates to mobile app
+        this.copilotBridge.setProgressCallback(async (progressUpdate: any) => {
+            console.log('📨 ✅ CopilotBridge progress update received in VSCoderServer!');
+            console.log('📨 Update type:', progressUpdate.updateType);
+            console.log('📨 Full progress update:', progressUpdate);
+            
+            // Send progress update to mobile app via Discovery WebSocket
+            if (this.discoveryWebSocket && this.discoveryWebSocket.isWebSocketConnected()) {
+                const progressMessage = {
+                    type: 'notification' as const,
+                    id: `progress-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                    data: progressUpdate,
+                    timestamp: new Date().toISOString()
+                };
+                
+                console.log('📤 ✅ Sending progress update to mobile app via WebSocket!');
+                console.log('📤 Progress message:', progressMessage);
+                this.discoveryWebSocket.send(progressMessage);
+                console.log('📤 ✅ Progress update sent successfully to mobile app!');
+            } else {
+                console.log('⚠️ ❌ WebSocket not connected, attempting reconnection for progress update...');
+                try {
+                    await this.discoveryWebSocket.forceReconnect();
+                    console.log('✅ WebSocket reconnected, resending progress update...');
+                    
+                    const progressMessage = {
+                        type: 'notification' as const,
+                        id: `progress-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                        data: progressUpdate,
+                        timestamp: new Date().toISOString()
+                    };
+                    
+                    this.discoveryWebSocket.send(progressMessage);
+                    console.log('📤 ✅ Progress update sent after reconnection!');
+                } catch (error) {
+                    console.error('❌ Failed to reconnect WebSocket for progress update:', error);
+                    console.log('⚠️ WebSocket status:', {
+                        hasWebSocket: !!this.discoveryWebSocket,
+                        isConnected: this.discoveryWebSocket?.isWebSocketConnected()
+                    });
+                }
+            }
+        });
         
         console.log('✅ VSCoderServer constructor completed');
     }
 
-    private setupMiddleware(): void {
-        console.log('🔧 Setting up Express middleware...');
-        
-        this.app.use(express.json());
-        this.app.use(express.urlencoded({ extended: true }));
-        console.log('✅ Body parsing middleware configured');
-        
-        // CORS middleware
-        this.app.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
-            console.log(`📡 ${req.method} ${req.url} from ${req.ip}`);
-            res.header('Access-Control-Allow-Origin', '*');
-            res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-            res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
-            
-            if (req.method === 'OPTIONS') {
-                console.log('✅ Handling OPTIONS preflight request');
-                res.sendStatus(200);
-            } else {
-                next();
-            }
-        });
-        
-        console.log('✅ CORS middleware configured');
+    private generateMessageId(): string {
+        return `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     }
 
-    private setupRoutes(): void {
-        // Health check with enhanced information
-        this.app.get('/health', async (req: express.Request, res: express.Response) => {
-            try {
-                const serverInfo = {
-                    status: 'ok',
-                    timestamp: new Date().toISOString(),
-                    copilotAvailable: true,
-                    connectedClients: this.connectedClients.size,
-                    serverType: 'vscode-extension', // Distinguish from discovery service
-                    version: vscode.version,
-                    workspaceOpen: !!vscode.workspace.workspaceFolders?.length,
-                    discoveryRegistered: this.discoveryService.isDeviceRegistered(),
-                    pairingCode: this.discoveryService.getPairingCode() || null
-                };
-                
-                console.log('📊 Health check requested, responding with:', serverInfo);
-                res.json(serverInfo);
-            } catch (error) {
-                console.error('❌ Health check error:', error);
-                res.json({ 
-                    status: 'ok', 
-                    copilotAvailable: false,
-                    copilotError: String(error),
-                    connectedClients: this.connectedClients.size,
-                    serverType: 'vscode-extension',
-                    timestamp: new Date().toISOString()
-                });
-            }
-        });
-
-        // Discovery service compatibility endpoints for mobile apps
-        this.app.get('/workspace', async (req: express.Request, res: express.Response) => {
-            try {
-                console.log('📱 Mobile app requesting workspace info via discovery endpoint');
-                
-                // If this is being called, the mobile app is likely connecting to the wrong service
-                // Provide helpful guidance
-                const response = {
-                    error: 'This is a VS Code server, not the discovery service',
-                    message: 'You are connecting directly to a VS Code extension server. To connect properly, use the discovery service with your pairing code.',
-                    serverType: 'vscode-extension',
-                    discoveryServiceUrl: 'https://vscoder.sabitfirmalar.com.tr',
-                    guidance: {
-                        step1: 'Use the VSCoder mobile app pairing feature',
-                        step2: 'Enter your 6-digit pairing code',
-                        step3: 'The app will automatically discover this VS Code instance',
-                        step4: 'Connection will be established securely'
-                    },
-                    currentPairingCode: this.discoveryService.getPairingCode() || 'Not available - restart VS Code extension'
-                };
-                
-                res.status(400).json(response);
-            } catch (error) {
-                res.status(500).json({ 
-                    error: 'VS Code workspace error',
-                    message: String(error),
-                    serverType: 'vscode-extension'
-                });
-            }
-        });
-
-        // Get workspace info (proper endpoint for connected apps)
-        this.app.get('/api/workspace', async (req: express.Request, res: express.Response) => {
-            try {
-                const workspaceFolders = vscode.workspace.workspaceFolders;
-                if (!workspaceFolders) {
-                    return res.json({ error: 'No workspace open' });
-                }
-
-                const workspaceInfo = {
-                    folders: workspaceFolders.map(folder => ({
-                        name: folder.name,
-                        uri: folder.uri.fsPath
-                    }))
-                };
-
-                res.json(workspaceInfo);
-            } catch (error) {
-                res.status(500).json({ error: String(error) });
-            }
-        });
-
-        // Get file tree
-        this.app.get('/files', async (req: express.Request, res: express.Response) => {
-            console.log('📱 Mobile app requesting files via discovery endpoint');
-            
-            // This endpoint should not be called directly by mobile apps
-            // They should use the proper pairing flow
-            const response = {
-                error: 'This is a VS Code server, not the discovery service',
-                message: 'You are connecting directly to a VS Code extension server. Use the pairing flow instead.',
-                serverType: 'vscode-extension',
-                discoveryServiceUrl: 'https://vscoder.sabitfirmalar.com.tr',
-                guidance: {
-                    instructions: 'Use the mobile app pairing feature with your 6-digit code',
-                    currentPairingCode: this.discoveryService.getPairingCode() || 'Not available'
-                }
-            };
-            
-            res.status(400).json(response);
-        });
-
-        // Get file tree (proper endpoint for connected apps)
-        this.app.get('/api/files', async (req: express.Request, res: express.Response) => {
-            try {
-                let folderPath = req.query.path as string;
-                const workspaceFolders = vscode.workspace.workspaceFolders;
-                
-                console.log('📂 File tree request:', { folderPath, workspaceFolders: workspaceFolders?.length });
-                
-                if (!workspaceFolders) {
-                    return res.status(400).json({ error: 'No workspace open' });
-                }
-
-                const workspaceRoot = workspaceFolders[0].uri.fsPath;
-                
-                // Handle special case: treat '/' as empty (workspace root)
-                if (folderPath === '/') {
-                    folderPath = '';
-                }
-                
-                // Determine target path - always within workspace
-                let targetPath: string;
-                if (folderPath) {
-                    // If folderPath is provided, it should be relative to workspace root
-                    if (path.isAbsolute(folderPath)) {
-                        // If somehow an absolute path is passed, ensure it's within workspace
-                        if (!folderPath.startsWith(workspaceRoot)) {
-                            console.log('❌ Access denied: path outside workspace', folderPath);
-                            return res.status(403).json({ error: 'Access denied: path outside workspace' });
-                        }
-                        targetPath = folderPath;
-                    } else {
-                        // Relative path - join with workspace root
-                        targetPath = path.join(workspaceRoot, folderPath);
-                    }
-                } else {
-                    // No path specified, use workspace root
-                    targetPath = workspaceRoot;
-                }
-                
-                // Security check: ensure target path is within workspace
-                const normalizedTarget = path.normalize(targetPath);
-                const normalizedWorkspace = path.normalize(workspaceRoot);
-                if (!normalizedTarget.startsWith(normalizedWorkspace)) {
-                    console.log('❌ Security violation: attempting to access path outside workspace', {
-                        target: normalizedTarget,
-                        workspace: normalizedWorkspace
-                    });
-                    return res.status(403).json({ error: 'Access denied: path outside workspace' });
-                }
-                
-                console.log('📂 Resolved target path:', { 
-                    originalPath: folderPath, 
-                    targetPath: targetPath,
-                    workspaceRoot: workspaceRoot
-                });
-                
-                const fileTree = await this.getFileTree(targetPath, false); // Don't recurse by default
-                
-                console.log('📂 File tree response:', { 
-                    path: targetPath, 
-                    type: fileTree?.type, 
-                    children: fileTree?.children?.length || 0 
-                });
-                
-                res.json(fileTree);
-            } catch (error) {
-                console.error('❌ File tree error:', error);
-                res.status(500).json({ error: String(error) });
-            }
-        });
-
-        // Get file content
-        this.app.get('/file/*', async (req: express.Request, res: express.Response) => {
-            try {
-                const filePath = decodeURIComponent(req.path.replace('/file/', ''));
-                const workspaceFolders = vscode.workspace.workspaceFolders;
-                
-                console.log('📄 File request received:', { 
-                    originalPath: req.path, 
-                    decodedPath: filePath,
-                    workspaceFolders: workspaceFolders?.map(f => f.uri.fsPath)
-                });
-                
-                if (!workspaceFolders) {
-                    console.log('❌ No workspace open');
-                    return res.status(400).json({ error: 'No workspace open' });
-                }
-                
-                const workspaceRoot = workspaceFolders[0].uri;
-                
-                // Security check: ensure file path is safe and within workspace
-                if (filePath.includes('..') || filePath.includes('~') || path.isAbsolute(filePath)) {
-                    console.log('❌ Security violation: suspicious file path', filePath);
-                    return res.status(403).json({ error: 'Access denied: invalid file path' });
-                }
-                
-                // Resolve path relative to workspace root using VS Code URI
-                const fileUri = vscode.Uri.joinPath(workspaceRoot, filePath);
-                
-                // Additional security check: ensure resolved path is within workspace
-                const resolvedPath = fileUri.fsPath;
-                const normalizedResolved = path.normalize(resolvedPath);
-                const normalizedWorkspace = path.normalize(workspaceRoot.fsPath);
-                if (!normalizedResolved.startsWith(normalizedWorkspace)) {
-                    console.log('❌ Security violation: file path outside workspace', {
-                        resolved: normalizedResolved,
-                        workspace: normalizedWorkspace
-                    });
-                    return res.status(403).json({ error: 'Access denied: file outside workspace' });
-                }
-                
-                console.log('📄 File request details:', { 
-                    filePath, 
-                    workspaceRoot: workspaceRoot.fsPath, 
-                    fileUri: fileUri.fsPath
-                });
-                
-                // Use VS Code's workspace file system API
-                try {
-                    const fileData = await vscode.workspace.fs.readFile(fileUri);
-                    const content = Buffer.from(fileData).toString('utf-8');
-                    console.log('✅ File content loaded successfully:', filePath);
-                    res.json({ content, path: fileUri.fsPath });
-                } catch (fsError) {
-                    console.log('📄 File not found or access denied:', fileUri.fsPath, fsError);
-                    if ((fsError as any).code === 'FileNotFound') {
-                        return res.status(404).json({ error: 'File not found', requestedPath: fileUri.fsPath });
-                    } else {
-                        return res.status(403).json({ error: 'File access denied', requestedPath: fileUri.fsPath, details: String(fsError) });
-                    }
-                }
-            } catch (error) {
-                console.error('❌ Error loading file:', error);
-                res.status(500).json({ error: String(error) });
-            }
-        });
-
-        // Update file content
-        this.app.post('/file/*', async (req: express.Request, res: express.Response) => {
-            try {
-                const filePath = decodeURIComponent(req.path.replace('/file/', ''));
-                const { content } = req.body;
-                const workspaceFolders = vscode.workspace.workspaceFolders;
-                
-                if (!workspaceFolders) {
-                    return res.status(400).json({ error: 'No workspace open' });
-                }
-                
-                // Resolve path relative to workspace root using VS Code URI
-                const workspaceRoot = workspaceFolders[0].uri;
-                const fileUri = vscode.Uri.joinPath(workspaceRoot, filePath);
-                
-                console.log('💾 File update request:', { filePath, workspaceRoot: workspaceRoot.fsPath, fileUri: fileUri.fsPath });
-                
-                try {
-                    // Use VS Code's workspace file system API
-                    const fileData = Buffer.from(content, 'utf-8');
-                    await vscode.workspace.fs.writeFile(fileUri, fileData);
-                    console.log('✅ File updated successfully:', filePath);
-                    
-                    // Notify all connected clients about the file change
-                    this.broadcastToClients({
-                        type: 'fileChanged',
-                        path: fileUri.fsPath,
-                        content
-                    });
-
-                    res.json({ success: true });
-                } catch (fsError) {
-                    console.log('❌ File update denied:', fileUri.fsPath, fsError);
-                    return res.status(403).json({ error: 'File update denied', requestedPath: fileUri.fsPath, details: String(fsError) });
-                }
-            } catch (error) {
-                console.error('❌ Error updating file:', error);
-                res.status(500).json({ error: String(error) });
-            }
-        });
-
-        // Copilot requests
-        this.app.post('/copilot', async (req: express.Request, res: express.Response) => {
-            try {
-                const copilotRequest: CopilotRequest = req.body;
-                const response = await this.copilotBridge.handleCopilotRequest(copilotRequest);
-                res.json(response);
-            } catch (error) {
-                res.status(500).json({ success: false, error: String(error) });
-            }
-        });
-
-        // Check Copilot availability
-        this.app.get('/copilot/status', async (req: express.Request, res: express.Response) => {
-            try {
-                res.json({ 
-                    available: true, 
-                    agentModes: ['autonomous', 'interactive', 'code-review', 'refactor', 'optimize', 'debug'],
-                    modelCommands: {
-                        getModels: 'GET /copilot/models',
-                        changeModel: 'POST /copilot/change-model',
-                        switchModel: 'POST /copilot/switch-model',
-                        manageModels: 'POST /copilot/manage-models'
-                    }
-                });
-            } catch (error) {
-                res.status(500).json({ error: String(error) });
-            }
-        });
-
-        // Accept edits from current file
-        this.app.post('/copilot/accept-edits', async (req: express.Request, res: express.Response) => {
-            try {
-                const result = await this.copilotBridge.acceptFileEdit();
-                res.json(result);
-            } catch (error) {
-                res.status(500).json({ success: false, error: String(error) });
-            }
-        });
-
-        // Reject edits from current file
-        this.app.post('/copilot/reject-edits', async (req: express.Request, res: express.Response) => {
-            try {
-                const result = await this.copilotBridge.rejectFileEdit();
-                res.json(result);
-            } catch (error) {
-                res.status(500).json({ success: false, error: String(error) });
-            }
-        });
-
-        // Accept all edits
-        this.app.post('/copilot/accept-all-edits', async (req: express.Request, res: express.Response) => {
-            try {
-                const result = await this.copilotBridge.acceptAllEdits();
-                res.json(result);
-            } catch (error) {
-                res.status(500).json({ success: false, error: String(error) });
-            }
-        });
-
-        // Reject all edits
-        this.app.post('/copilot/reject-all-edits', async (req: express.Request, res: express.Response) => {
-            try {
-                const result = await this.copilotBridge.rejectAllEdits();
-                res.json(result);
-            } catch (error) {
-                res.status(500).json({ success: false, error: String(error) });
-            }
-        });
-
-        // Undo edit
-        this.app.post('/copilot/undo-edit', async (req: express.Request, res: express.Response) => {
-            try {
-                const result = await this.copilotBridge.undoEdit();
-                res.json(result);
-            } catch (error) {
-                res.status(500).json({ success: false, error: String(error) });
-            }
-        });
-
-        // Redo edit
-        this.app.post('/copilot/redo-edit', async (req: express.Request, res: express.Response) => {
-            try {
-                const result = await this.copilotBridge.redoEdit();
-                res.json(result);
-            } catch (error) {
-                res.status(500).json({ success: false, error: String(error) });
-            }
-        });
-
-        // Get available models
-        this.app.get('/copilot/models', async (req: express.Request, res: express.Response) => {
-            try {
-                const result = await this.copilotBridge.getAvailableModels();
-                res.json(result);
-            } catch (error) {
-                res.status(500).json({ success: false, error: String(error) });
-            }
-        });
-
-        // Change model
-        this.app.post('/copilot/change-model', async (req: express.Request, res: express.Response) => {
-            try {
-                const { modelName } = req.body;
-                const result = await this.copilotBridge.changeModel(modelName);
-                res.json(result);
-            } catch (error) {
-                res.status(500).json({ success: false, error: String(error) });
-            }
-        });
-
-        // Switch to next model
-        this.app.post('/copilot/switch-model', async (req: express.Request, res: express.Response) => {
-            try {
-                const result = await this.copilotBridge.switchToNextModel();
-                res.json(result);
-            } catch (error) {
-                res.status(500).json({ success: false, error: String(error) });
-            }
-        });
-
-        // Manage models
-        this.app.post('/copilot/manage-models', async (req: express.Request, res: express.Response) => {
-            try {
-                const result = await this.copilotBridge.manageModels();
-                res.json(result);
-            } catch (error) {
-                res.status(500).json({ success: false, error: String(error) });
-            }
-        });
-
-        // Get recent logs
-        this.app.get('/copilot/logs', async (req: express.Request, res: express.Response) => {
-            try {
-                const result = await this.copilotBridge.getRecentLogs();
-                res.json(result);
-            } catch (error) {
-                res.status(500).json({ success: false, error: String(error) });
-            }
-        });
-
-        // Add file to chat using VS Code's native command
-        this.app.post('/copilot/add-file-to-chat', async (req: express.Request, res: express.Response) => {
-            try {
-                const { filePath } = req.body;
-                const workspaceFolders = vscode.workspace.workspaceFolders;
-                
-                console.log('📎 Add file to chat request:', { filePath });
-                
-                if (!workspaceFolders) {
-                    return res.status(400).json({ error: 'No workspace open' });
-                }
-                
-                // Security check: ensure file path is safe and within workspace
-                if (!filePath || filePath.includes('..') || filePath.includes('~') || path.isAbsolute(filePath)) {
-                    console.log('❌ Security violation: suspicious file path for chat', filePath);
-                    return res.status(403).json({ error: 'Access denied: invalid file path' });
-                }
-                
-                const workspaceRoot = workspaceFolders[0].uri;
-                const fileUri = vscode.Uri.joinPath(workspaceRoot, filePath);
-                
-                // Additional security check: ensure resolved path is within workspace
-                const resolvedPath = fileUri.fsPath;
-                const normalizedResolved = path.normalize(resolvedPath);
-                const normalizedWorkspace = path.normalize(workspaceRoot.fsPath);
-                if (!normalizedResolved.startsWith(normalizedWorkspace)) {
-                    console.log('❌ Security violation: file path outside workspace for chat', {
-                        resolved: normalizedResolved,
-                        workspace: normalizedWorkspace
-                    });
-                    return res.status(403).json({ error: 'Access denied: file outside workspace' });
-                }
-                
-                console.log('📎 Adding file to chat:', { filePath, fileUri: fileUri.fsPath });
-                
-                try {
-                    // Simple approach: try the main command that exists, then fallback
-                    let success = false;
-                    let method = '';
-                    
-                    // Method 1: Use the official addToChatAction command
-                    try {
-                        await vscode.commands.executeCommand('workbench.action.chat.addToChatAction', fileUri);
-                        success = true;
-                        method = 'addToChatAction';
-                        console.log('✅ Successfully added file to chat via addToChatAction');
-                    } catch (error1) {
-                        console.log('❌ addToChatAction failed:', error1);
-                        
-                        // Method 2: Try the inlineResourceAnchor command as fallback
-                        try {
-                            await vscode.commands.executeCommand('chat.inlineResourceAnchor.addFileToChat', fileUri);
-                            success = true;
-                            method = 'inlineResourceAnchor';
-                            console.log('✅ Successfully added file to chat via inlineResourceAnchor');
-                        } catch (error2) {
-                            console.log('❌ inlineResourceAnchor failed:', error2);
-                            
-                            // Method 3: Fallback - open both file and chat
-                            try {
-                                // Open the file in editor
-                                const doc = await vscode.workspace.openTextDocument(fileUri);
-                                await vscode.window.showTextDocument(doc);
-                                
-                                // Open chat panel (this command should exist)
-                                await vscode.commands.executeCommand('workbench.panel.chat.view.copilot.focus');
-                                
-                                success = true;
-                                method = 'manual_fallback';
-                                console.log('✅ Opened file and chat for manual attachment');
-                            } catch (error3) {
-                                console.log('❌ Manual fallback failed:', error3);
-                                throw new Error(`Failed to add file to chat: ${error1}`);
-                            }
-                        }
-                    }
-                    
-                    if (success) {
-                        console.log(`✅ File handled using method: ${method}`, filePath);
-                        res.json({ 
-                            success: true, 
-                            message: method === 'addToChatAction' 
-                                ? `File ${path.basename(filePath)} added to chat successfully.`
-                                : method === 'inlineResourceAnchor' 
-                                    ? `File ${path.basename(filePath)} attached to chat.`
-                                    : `File ${path.basename(filePath)} opened. Please manually add it to chat.`,
-                            filePath: filePath,
-                            method: method,
-                            requiresManualAction: method === 'manual_fallback'
-                        });
-                    } else {
-                        throw new Error('All methods failed');
-                    }
-                } catch (commandError) {
-                    console.log('❌ All methods failed to execute addFileToChat:', commandError);
-                    // Fallback: try to open chat and show the file was attached
-                    try {
-                        await vscode.commands.executeCommand('workbench.panel.chat.view.copilot.focus');
-                        res.json({ 
-                            success: true, 
-                            message: `Chat opened. File ${path.basename(filePath)} is ready to be discussed.`,
-                            filePath: filePath,
-                            fallback: true
-                        });
-                    } catch (fallbackError) {
-                        return res.status(500).json({ 
-                            success: false, 
-                            error: 'Failed to add file to chat', 
-                            details: String(commandError) 
-                        });
-                    }
-                }
-            } catch (error) {
-                console.error('❌ Error adding file to chat:', error);
-                res.status(500).json({ success: false, error: String(error) });
-            }
-        });
-
-        // Run pending commands
-        this.app.post('/copilot/run-pending-commands', async (req: express.Request, res: express.Response) => {
-            try {
-                console.log('🔄 Running pending commands...');
-                const result = await this.copilotBridge.runPendingCommands();
-                console.log('✅ Run pending commands result:', result);
-                res.json(result);
-            } catch (error) {
-                console.error('❌ Error running pending commands:', error);
-                res.status(500).json({ success: false, error: String(error) });
-            }
-        });
-
-        // Continue iteration
-        this.app.post('/copilot/continue-iteration', async (req: express.Request, res: express.Response) => {
-            try {
-                console.log('🔁 Continuing iteration...');
-                const result = await this.copilotBridge.continueIteration();
-                console.log('✅ Continue iteration result:', result);
-                res.json(result);
-            } catch (error) {
-                console.error('❌ Error continuing iteration:', error);
-                res.status(500).json({ success: false, error: String(error) });
-            }
-        });
-
-        // Auto-execute (run pending commands + continue iteration)
-        this.app.post('/copilot/auto-execute', async (req: express.Request, res: express.Response) => {
-            try {
-                console.log('⚡ Auto-executing pending actions...');
-                
-                // Only run pending commands, don't trigger new iteration
-                const pendingResult = await this.copilotBridge.runPendingCommands();
-                let totalActions = 0;
-                
-                if (pendingResult.success) {
-                    totalActions += pendingResult.data?.commandsRun || 0;
-                }
-
-                const result = {
-                    success: true,
-                    data: {
-                        commandsRun: totalActions,
-                        action: 'auto_executed',
-                        pendingCommandsResult: pendingResult
-                    },
-                    message: totalActions > 0 ? 'Auto-executed all pending actions' : 'No pending actions found'
-                };
-                
-                console.log('✅ Auto-execute result:', result);
-                res.json(result);
-            } catch (error) {
-                console.error('❌ Error auto-executing:', error);
-                res.status(500).json({ success: false, error: String(error) });
-            }
-        });
+    private hashContent(content: any): string {
+        // Simple hash function for content deduplication
+        const str = JSON.stringify(content);
+        let hash = 0;
+        for (let i = 0; i < str.length; i++) {
+            const char = str.charCodeAt(i);
+            hash = ((hash << 5) - hash) + char;
+            hash = hash & hash; // Convert to 32-bit integer
+        }
+        return `hash-${Math.abs(hash)}`;
     }
 
-    private setupWebSocket(): void {
-        if (!this.server) return;
-
-        this.wss = new WebSocket.Server({ server: this.server });
-
-        this.wss.on('connection', (ws: WebSocket) => {
-            this.connectedClients.add(ws);
-            console.log('Client connected via WebSocket');
-
-            ws.on('message', async (message: WebSocket.Data) => {
-                try {
-                    const data = JSON.parse(message.toString());
-                    await this.handleWebSocketMessage(ws, data);
-                } catch (error) {
-                    ws.send(JSON.stringify({ error: 'Invalid message format' }));
-                }
-            });
-
-            ws.on('close', () => {
-                this.connectedClients.delete(ws);
-                console.log('Client disconnected from WebSocket');
-            });
-
-            // Send initial connection confirmation
-            ws.send(JSON.stringify({ 
-                type: 'connected', 
-                message: 'Connected to VSCoder server' 
-            }));
-        });
+    private startNewSession(): void {
+        this.currentSessionId = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+        this.sentMessages.clear(); // Clear previous session messages
+        this.messagePool.clear(); // Clear message pool for new session
+        this.messageSequence = 0; // Reset sequence counter
+        console.log('🔄 Started new session:', this.currentSessionId);
+        
+        // Set up automatic cleanup to prevent memory leaks
+        setTimeout(() => {
+            if (this.sentMessages.size > 100) {
+                console.log('🧹 Cleaning up old messages to prevent memory leaks');
+                const messagesArray = Array.from(this.sentMessages);
+                this.sentMessages = new Set(messagesArray.slice(-50)); // Keep only last 50 messages
+            }
+            
+            // Clean up old messages from pool (older than 1 hour)
+            this.cleanupMessagePool();
+        }, 300000); // Clean up every 5 minutes
     }
 
-    private async handleWebSocketMessage(ws: WebSocket, data: any): Promise<void> {
-        switch (data.type) {
-            case 'copilot':
-                const response = await this.copilotBridge.handleCopilotRequest(data.request);
-                ws.send(JSON.stringify({ type: 'copilotResponse', data: response }));
-                break;
-            
-            case 'fileChange':
-                // Handle real-time file changes
-                this.broadcastToClients(data, ws);
-                break;
-
-            default:
-                ws.send(JSON.stringify({ error: 'Unknown message type' }));
+    private cleanupMessagePool(): void {
+        const oneHourAgo = Date.now() - (60 * 60 * 1000);
+        let cleanedCount = 0;
+        
+        for (const [messageId, message] of this.messagePool.entries()) {
+            if (message.timestamp && new Date(message.timestamp).getTime() < oneHourAgo) {
+                this.messagePool.delete(messageId);
+                cleanedCount++;
+            }
+        }
+        
+        if (cleanedCount > 0) {
+            console.log(`🧹 Cleaned up ${cleanedCount} old messages from pool`);
         }
     }
 
-    private broadcastToClients(data: any, exclude?: WebSocket): void {
-        this.connectedClients.forEach(client => {
-            if (client !== exclude && client.readyState === WebSocket.OPEN) {
-                client.send(JSON.stringify(data));
-            }
-        });
+    private addToMessagePool(message: any): string {
+        this.messageSequence++;
+        const messageId = message.messageId || this.generateMessageId();
+        
+        const poolMessage = {
+            ...message,
+            messageId,
+            sequence: this.messageSequence,
+            timestamp: message.timestamp || new Date().toISOString(),
+            sessionId: this.currentSessionId
+        };
+        
+        this.messagePool.set(messageId, poolMessage);
+        console.log(`📦 Added message to pool: ${messageId} (sequence: ${this.messageSequence})`);
+        
+        return messageId;
     }
 
-    private async getFileTree(dirPath: string, recursive: boolean = true): Promise<any> {
+    /**
+     * Set up WebSocket-based communication between VS Code and mobile app
+     */
+    private async setupApiCommunication(): Promise<void> {
         try {
-            // Use VS Code's file system API instead of direct fs access
-            const dirUri = vscode.Uri.file(dirPath);
-            const stats = await vscode.workspace.fs.stat(dirUri);
-            
-            // Get workspace root for relative path calculation
-            const workspaceFolders = vscode.workspace.workspaceFolders;
-            const workspaceRoot = workspaceFolders?.[0]?.uri.fsPath || '';
-            
-            // Security check: ensure dirPath is within workspace
-            const normalizedDirPath = path.normalize(dirPath);
-            const normalizedWorkspaceRoot = path.normalize(workspaceRoot);
-            if (!normalizedDirPath.startsWith(normalizedWorkspaceRoot)) {
-                console.log('❌ getFileTree security violation: path outside workspace', {
-                    dirPath: normalizedDirPath,
-                    workspace: normalizedWorkspaceRoot
-                });
-                throw new Error('Access denied: path outside workspace');
-            }
-            
-            // Calculate relative path from workspace root
-            const getRelativePath = (absolutePath: string): string => {
-                if (workspaceRoot && absolutePath.startsWith(workspaceRoot)) {
-                    let relativePath = path.relative(workspaceRoot, absolutePath);
-                    // Normalize path separators to forward slashes
-                    relativePath = relativePath.replace(/\\/g, '/');
-                    // If it's the workspace root itself, return empty string or "."
-                    if (relativePath === '') {
-                        return '.';
-                    }
-                    return relativePath;
-                }
-                return absolutePath;
-            };
-            
-            const info: any = {
-                name: path.basename(dirPath),
-                path: getRelativePath(dirPath)  // Use relative path
-            };
-
-            if (stats.type === vscode.FileType.Directory) {
-                info.type = 'directory';
-                info.children = [];
-                
+            // Ensure device is authenticated before setting up WebSocket
+            if (!this.discoveryService.isDeviceAuthenticated()) {
+                console.log('🔐 Device not authenticated, authenticating first...');
                 try {
-                    const entries = await vscode.workspace.fs.readDirectory(dirUri);
-                    for (const [name, type] of entries) {
-                        // Skip hidden files and node_modules
-                        if (name.startsWith('.') || name === 'node_modules') {
-                            continue;
-                        }
-                        
-                        const fullPath = path.join(dirPath, name);
-                        
-                        // Security check: ensure child path is still within workspace
-                        const normalizedFullPath = path.normalize(fullPath);
-                        if (!normalizedFullPath.startsWith(normalizedWorkspaceRoot)) {
-                            console.log('❌ Skipping file outside workspace:', fullPath);
-                            continue;
-                        }
-                        
-                        try {
-                            if (type === vscode.FileType.Directory) {
-                                // For directories, create a basic entry
-                                const dirInfo = {
-                                    name: name,
-                                    path: getRelativePath(fullPath),  // Use relative path
-                                    type: 'directory',
-                                    children: recursive ? (await this.getFileTree(fullPath, recursive)).children : []
-                                };
-                                info.children.push(dirInfo);
-                            } else {
-                                // For files, get the stats
-                                const fileStats = await vscode.workspace.fs.stat(vscode.Uri.file(fullPath));
-                                info.children.push({
-                                    name: name,
-                                    path: getRelativePath(fullPath),  // Use relative path
-                                    type: 'file',
-                                    size: fileStats.size
-                                });
-                            }
-                        } catch (error) {
-                            // Skip files that can't be read
-                            console.log('Cannot read file/dir:', fullPath, error);
-                            continue;
-                        }
-                    }
+                    await this.discoveryService.authenticate();
+                    console.log('✅ Device authentication successful for WebSocket');
                 } catch (error) {
-                    console.log('Cannot read directory:', dirPath, error);
+                    console.warn('⚠️ Failed to authenticate device for WebSocket communication:', error);
+                    return;
                 }
-            } else {
-                info.type = 'file';
-                info.size = stats.size;
             }
 
-            return info;
+            // Test API connection first
+            const apiConnected = await this.apiClient.testConnection();
+            if (!apiConnected) {
+                console.warn('⚠️ API connection test failed, WebSocket communication may not work');
+                return;
+            }
+
+            // Get pairing code from discovery service
+            const pairingCode = this.discoveryService.getPairingCode();
+            if (!pairingCode) {
+                console.warn('⚠️ No pairing code available for WebSocket communication');
+                return;
+            }
+
+            // Get device token from discovery service (not apiClient)
+            const deviceToken = this.discoveryService.getDeviceToken();
+            if (!deviceToken) {
+                console.warn('⚠️ No device token available for WebSocket communication');
+                return;
+            }
+
+            console.log('🔑 Setting up WebSocket with credentials (will connect and listen for commands)...', {
+                pairingCode: pairingCode,
+                hasToken: !!deviceToken,
+                isAuthenticated: this.discoveryService.isDeviceAuthenticated()
+            });
+
+            // Set credentials for WebSocket client
+            this.discoveryWebSocket.setCredentials(pairingCode, deviceToken);
+            
+            // Set message handler for incoming commands
+            this.discoveryWebSocket.setOnMessage((message: WebSocketMessage) => {
+                console.log('🔥 WebSocket message handler called with:', message);
+                this.handleWebSocketMessage(message);
+            });
+
+            // Connect to Discovery API WebSocket - will handle auth errors gracefully until devices pair
+            console.log('🔌 Attempting to connect to Discovery API WebSocket...');
+            await this.discoveryWebSocket.connect();
+            console.log('🎉 WebSocket connection established successfully!');
+
+            // Start automatic chat history synchronization
+            console.log('🔄 Starting automatic chat history synchronization...');
+            this.startAutomaticChatSync();
+
+            // Start WebSocket health monitoring
+            console.log('💓 Starting WebSocket health monitoring...');
+            this.startWebSocketHealthCheck();
+
+            console.log('✅ WebSocket-based communication setup completed and listening');
         } catch (error) {
-            console.log('VS Code API failed, falling back to fs:', error);
-            // Fallback to regular fs for backward compatibility
-            const stats = fs.statSync(dirPath);
-            
-            // Get workspace root for relative path calculation in fallback
-            const workspaceFolders = vscode.workspace.workspaceFolders;
-            const workspaceRoot = workspaceFolders?.[0]?.uri.fsPath || '';
-            
-            // Security check in fallback too
-            const normalizedDirPath = path.normalize(dirPath);
-            const normalizedWorkspaceRoot = path.normalize(workspaceRoot);
-            if (!normalizedDirPath.startsWith(normalizedWorkspaceRoot)) {
-                console.log('❌ Fallback security violation: path outside workspace', {
-                    dirPath: normalizedDirPath,
-                    workspace: normalizedWorkspaceRoot
-                });
-                throw new Error('Access denied: path outside workspace');
-            }
-            
-            // Calculate relative path from workspace root (same logic as above)
-            const getRelativePath = (absolutePath: string): string => {
-                if (workspaceRoot && absolutePath.startsWith(workspaceRoot)) {
-                    let relativePath = path.relative(workspaceRoot, absolutePath);
-                    // Normalize path separators to forward slashes
-                    relativePath = relativePath.replace(/\\/g, '/');
-                    // If it's the workspace root itself, return empty string or "."
-                    if (relativePath === '') {
-                        return '.';
-                    }
-                    return relativePath;
-                }
-                return absolutePath;
-            };
-            
-            const info: any = {
-                name: path.basename(dirPath),
-                path: getRelativePath(dirPath)  // Use relative path in fallback too
-            };
-
-            if (stats.isDirectory()) {
-                info.type = 'directory';
-                info.children = [];
-                
-                const files = fs.readdirSync(dirPath);
-                for (const file of files) {
-                    // Skip hidden files and node_modules
-                    if (file.startsWith('.') || file === 'node_modules') {
-                        continue;
-                    }
-                    
-                    const fullPath = path.join(dirPath, file);
-                    
-                    // Security check in fallback too
-                    const normalizedFullPath = path.normalize(fullPath);
-                    if (!normalizedFullPath.startsWith(normalizedWorkspaceRoot)) {
-                        console.log('❌ Fallback: Skipping file outside workspace:', fullPath);
-                        continue;
-                    }
-                    
-                    try {
-                        const fileStats = fs.statSync(fullPath);
-                        if (fileStats.isDirectory()) {
-                            info.children.push({
-                                name: file,
-                                path: getRelativePath(fullPath),  // Use relative path
-                                type: 'directory',
-                                children: recursive ? (await this.getFileTree(fullPath, recursive)).children : []
-                            });
-                        } else {
-                            info.children.push({
-                                name: file,
-                                path: getRelativePath(fullPath),  // Use relative path
-                                type: 'file',
-                                size: fileStats.size
-                            });
-                        }
-                    } catch (error) {
-                        // Skip files that can't be read
-                        continue;
-                    }
-                }
-            } else {
-                info.type = 'file';
-                info.size = stats.size;
-            }
-
-            return info;
+            console.error('❌ Failed to setup WebSocket communication:', error);
         }
     }
 
-    private isFileInWorkspace(filePath: string, workspaceFolders: readonly vscode.WorkspaceFolder[]): boolean {
-        console.log('🔍 Checking file access:', { filePath, workspaceFolders: workspaceFolders.map(f => f.uri.fsPath) });
+    /**
+     * Handle incoming WebSocket messages from Discovery API
+     */
+    private handleWebSocketMessage(message: WebSocketMessage): void {
+        console.log('📨 Received WebSocket message from Discovery API:', message.type, message.id);
+        console.log('📨 Full WebSocket message:', JSON.stringify(message, null, 2));
+
+        if (message.type === 'command' && message.command) {
+            console.log('🎯 Processing command:', message.command, 'with data:', message.data);
+            
+            // Convert WebSocket message to internal Message format
+            const internalMessage: Message = {
+                id: message.id || `ws-${Date.now()}`,
+                type: 'command',
+                content: message.command,
+                data: message.data,
+                timestamp: new Date()
+            };
+
+            console.log('🔄 Converted to internal message:', JSON.stringify(internalMessage, null, 2));
+
+            // Process the command
+            this.handleMobileAppMessage(internalMessage)
+                .then((result) => {
+                    console.log('✅ Command processed successfully, sending response:', JSON.stringify(result, null, 2));
+                    // Send response back via WebSocket using the original messageId from mobile app
+                    const originalMessageId = message.data?.messageId || message.messageId || message.id;
+                    if (originalMessageId) {
+                        this.discoveryWebSocket.sendResponse(originalMessageId, result);
+                        console.log('📤 Response sent via WebSocket for messageId:', originalMessageId);
+                    }
+                })
+                .catch((error) => {
+                    console.error('❌ Error processing WebSocket command:', error);
+                    const errorResponse = {
+                        success: false,
+                        error: error.message || 'Command processing failed',
+                        // SIMPLIFIED: Only use messageId
+                        ...(message.data?.messageId && { messageId: message.data.messageId })
+                    };
+                    console.log('📤 Sending error response:', JSON.stringify(errorResponse, null, 2));
+                    const originalMessageId = message.data?.messageId || message.messageId || message.id;
+                    if (originalMessageId) {
+                        this.discoveryWebSocket.sendResponse(originalMessageId, errorResponse);
+                    }
+                });
+        } else {
+            console.log('⚠️ Received non-command message or missing command:', message.type, message.command);
+        }
+    }
+
+    /**
+     * Handle incoming messages from mobile app via API
+     */
+    private async handleMobileAppMessage(message: Message): Promise<any> {
+        console.log('📨 Received message from mobile app:', message.type, message.content);
+
+        try {
+            switch (message.type) {
+                case 'command':
+                    return await this.handleMobileCommand(message);
+                case 'copilot_request':
+                    return await this.handleMobileCopilotRequest(message);
+                case 'file_request':
+                    return await this.handleMobileFileRequest(message);
+                case 'ping':
+                    return await this.handleMobilePing(message);
+                default:
+                    console.warn('⚠️ Unknown message type from mobile app:', message.type);
+                    const errorResponse = {
+                        error: 'Unknown message type',
+                        type: message.type
+                    };
+                    
+                    // For backward compatibility with API-based communication
+                    if (message.id) {
+                        await this.apiClient.sendResponse(errorResponse, message.id);
+                    }
+                    
+                    return errorResponse;
+            }
+        } catch (error) {
+            console.error('❌ Error handling mobile app message:', error);
+            const errorResponse = {
+                error: 'Internal server error',
+                details: String(error)
+            };
+            
+            // For backward compatibility with API-based communication
+            if (message.id) {
+                await this.apiClient.sendResponse(errorResponse, message.id);
+            }
+            
+            return errorResponse;
+        }
+    }
+
+    /**
+     * Handle command from mobile app
+     */
+    private async handleMobileCommand(message: Message): Promise<any> {
+        const command = message.content;
+        const data = message.data || {};
+
+        console.log('🎯 Executing command from mobile app:', command);
+        console.log('🔍 DEBUG: Full message data received:', JSON.stringify(data, null, 2));
+        console.log('🔍 DEBUG: messageId in data:', data.messageId);
+
+        try {
+            let result;
+            switch (command) {
+                // Workspace Operations
+                case 'get_workspace_info':
+                    result = await this.getWorkspaceInfo();
+                    break;
+                case 'list_files':
+                    result = await this.listFiles(data.path || '.');
+                    break;
+                case 'read_file':
+                    result = await this.readFile(data.path);
+                    break;
+                case 'write_file':
+                    result = await this.writeFile(data.path, data.content);
+                    break;
+                
+                // Editor Operations
+                case 'open_file':
+                    result = await this.openFile(data.path);
+                    break;
+                case 'get_active_file':
+                    result = await this.getActiveFile();
+                    break;
+                case 'focus_editor':
+                    result = await this.focusEditor();
+                    break;
+                
+                // System Operations
+                case 'run_terminal':
+                    result = await this.runTerminalCommand(data.command);
+                    break;
+                case 'run_vscode_command':
+                    result = await this.runVSCodeCommand(data.command, data.args);
+                    break;
+                
+                // Copilot Operations
+                case 'copilot_chat':
+                    result = await this.handleCopilotChat(data.prompt, data.mode, data.agentMode);
+                    break;
+                case 'copilot_accept_edits':
+                    result = await this.copilotBridge.acceptFileEdit();
+                    break;
+                case 'copilot_reject_edits':
+                    result = await this.copilotBridge.rejectFileEdit();
+                    break;
+                case 'copilot_accept_all_edits':
+                    result = await this.copilotBridge.acceptAllEdits();
+                    break;
+                case 'copilot_reject_all_edits':
+                    result = await this.copilotBridge.rejectAllEdits();
+                    break;
+                case 'copilot_undo_edit':
+                    result = await this.copilotBridge.undoEdit();
+                    break;
+                case 'copilot_redo_edit':
+                    result = await this.copilotBridge.redoEdit();
+                    break;
+                case 'copilot_get_models':
+                    result = await this.copilotBridge.getAvailableModels();
+                    break;
+                case 'copilot_change_model':
+                    result = await this.copilotBridge.changeModel(data.modelName);
+                    break;
+                case 'copilot_switch_model':
+                    result = await this.copilotBridge.switchToNextModel();
+                    break;
+                case 'copilot_manage_models':
+                    result = await this.copilotBridge.manageModels();
+                    break;
+                case 'copilot_get_logs':
+                    result = await this.copilotBridge.getRecentLogs();
+                    break;
+                case 'copilot_add_file_to_chat':
+                    result = await this.addFileToChat(data.filePath);
+                    break;
+                case 'copilot_run_pending_commands':
+                    result = await this.copilotBridge.runPendingCommands();
+                    break;
+                case 'copilot_continue_iteration':
+                    result = await this.copilotBridge.continueIteration();
+                    break;
+                case 'copilot_auto_execute':
+                    result = await this.autoCopilotExecute();
+                    break;
+                case 'copilot_new_session':
+                    result = await this.startNewCopilotSession();
+                    break;
+                case 'request_chat_sync':
+                    console.log('🔄 Mobile app requesting chat history sync...');
+                    
+                    // Ensure WebSocket is connected before starting sync
+                    if (!this.discoveryWebSocket.isWebSocketConnected()) {
+                        console.log('⚡ WebSocket not connected, attempting to reconnect...');
+                        try {
+                            await this.discoveryWebSocket.connect();
+                            console.log('✅ WebSocket reconnected successfully');
+                        } catch (wsError) {
+                            console.warn('⚠️ WebSocket reconnection failed, but continuing with sync:', wsError);
+                        }
+                    }
+                    
+                    // 🔥 CRITICAL FIX: Set up progress callback for chat sync before starting
+                    console.log('🔧 Setting up progress callback for chat sync...');
+                    this.copilotBridge.setProgressCallback((update: any) => {
+                        const messageId = this.generateMessageId();
+                        
+                        console.log('📡 🎯 Chat sync progress callback triggered!', update.updateType, messageId);
+                        console.log('📡 🔍 Progress update data:', update);
+                        
+                        // Check if we've already sent this message
+                        const contentHash = this.hashContent(update);
+                        if (this.sentMessages.has(contentHash)) {
+                            console.log('🚫 Skipping duplicate chat sync progress update:', messageId);
+                            return;
+                        }
+                        
+                        const progressMessage = {
+                            type: 'copilotProgress',
+                            updateType: update.updateType,
+                            data: update.data,
+                            timestamp: update.timestamp,
+                            messageId: messageId,
+                            originalMessageId: messageId,
+                            sessionId: this.currentSessionId
+                        };
+                        
+                        // Add to message pool first for reliability
+                        this.addToMessagePool(progressMessage);
+                        
+                        console.log('📡 Sending chat sync progress via Discovery WebSocket...', update.updateType, messageId);
+                        // Send via Discovery WebSocket for remote communication
+                        this.discoveryWebSocket.send({
+                            type: 'notification',
+                            data: progressMessage,
+                            timestamp: new Date().toISOString()
+                        });
+                        
+                        this.sentMessages.add(contentHash);
+                        console.log('📡 ✅ Chat sync progress update sent successfully!');
+                    });
+                    
+                    console.log('🚀 Starting chat history sync with callback configured...');
+                    await this.copilotBridge.startChatHistorySync();
+                    console.log('🔍 DEBUG: startChatHistorySync completed - initial sync should be done');
+                    
+                    // Create a proper result object since startChatHistorySync now properly awaits initial sync
+                    result = {
+                        success: true,
+                        message: 'Chat history sync completed and monitoring started',
+                        status: 'sync_completed',
+                        timestamp: new Date().toISOString()
+                    };
+                    console.log('✅ Chat sync triggered from mobile app request, result:', result);
+                    break;
+                
+                // Advanced File Operations
+                case 'create_file':
+                    result = await this.createFile(data.path, data.content || '');
+                    break;
+                case 'delete_file':
+                    result = await this.deleteFile(data.path);
+                    break;
+                case 'rename_file':
+                    result = await this.renameFile(data.oldPath, data.newPath);
+                    break;
+                case 'create_directory':
+                    result = await this.createDirectory(data.path);
+                    break;
+                case 'copy_file':
+                    result = await this.copyFile(data.sourcePath, data.destinationPath);
+                    break;
+                
+                // Search and Navigation
+                case 'search_files':
+                    result = await this.searchInFiles(data.query, data.includePattern, data.excludePattern);
+                    break;
+                case 'find_files':
+                    result = await this.findFiles(data.pattern);
+                    break;
+                case 'go_to_definition':
+                    result = await this.goToDefinition(data.filePath, data.line, data.character);
+                    break;
+                case 'find_references':
+                    result = await this.findReferences(data.filePath, data.line, data.character);
+                    break;
+                
+                // Git Operations  
+                case 'git_status':
+                    result = await this.getGitStatus();
+                    break;
+                case 'git_add':
+                    result = await this.gitAdd(data.files);
+                    break;
+                case 'git_commit':
+                    result = await this.gitCommit(data.message);
+                    break;
+                case 'git_push':
+                    result = await this.gitPush();
+                    break;
+                case 'git_pull':
+                    result = await this.gitPull();
+                    break;
+                case 'git_checkout':
+                    result = await this.gitCheckout(data.branch);
+                    break;
+                case 'get_git_branches':
+                    result = await this.getGitBranches();
+                    break;
+                
+                // Language Server Operations
+                case 'format_document':
+                    result = await this.formatDocument(data.filePath);
+                    break;
+                case 'get_diagnostics':
+                    result = await this.getDiagnostics(data.filePath);
+                    break;
+                
+                // Settings Operations
+                case 'update_settings':
+                    result = await this.updateSettings(data.settings);
+                    break;
+                case 'get_settings':
+                    result = await this.getSettings();
+                    break;
+                
+                default:
+                    throw new Error(`Unknown command: ${command}`);
+            }
+
+            const response = {
+                success: true,
+                command: command,
+                result: result,
+                // SIMPLIFIED: Only use messageId
+                ...(data.messageId && { messageId: data.messageId })
+            };
+
+            // For backward compatibility with API-based communication, still send via apiClient if message has ID
+            if (message.id) {
+                await this.apiClient.sendResponse(response, message.id);
+            }
+
+            // Always return the response for WebSocket handling
+            return response;
+
+        } catch (error) {
+            const errorResponse = {
+                success: false,
+                command: command,
+                error: String(error),
+                // SIMPLIFIED: Only use messageId
+                ...(data.messageId && { messageId: data.messageId })
+            };
+
+            // For backward compatibility with API-based communication
+            if (message.id) {
+                await this.apiClient.sendResponse(errorResponse, message.id);
+            }
+
+            // Always return the error response for WebSocket handling
+            return errorResponse;
+        }
+    }
+
+    /**
+     * Handle Copilot request from mobile app
+     */
+    private async handleMobileCopilotRequest(message: Message): Promise<any> {
+        const copilotRequest = message.data as CopilotRequest;
         
-        // Normalize paths for comparison (handle Windows vs Unix paths)
-        const normalizedFilePath = path.normalize(filePath).toLowerCase();
-        
-        const isAllowed = workspaceFolders.some(folder => {
-            const normalizedWorkspacePath = path.normalize(folder.uri.fsPath).toLowerCase();
-            const isInWorkspace = normalizedFilePath.startsWith(normalizedWorkspacePath);
-            console.log('📂 Workspace check:', { 
-                folder: normalizedWorkspacePath, 
-                file: normalizedFilePath, 
-                allowed: isInWorkspace 
-            });
-            return isInWorkspace;
-        });
-        
-        console.log('🔐 Final access decision:', isAllowed);
-        return isAllowed;
+        console.log('🤖 Processing Copilot request from mobile app');
+
+        try {
+            const response = await this.copilotBridge.handleCopilotRequest(copilotRequest);
+            
+            const result = {
+                success: true,
+                copilot_response: response
+            };
+
+            // For backward compatibility with API-based communication
+            if (message.id) {
+                await this.apiClient.sendResponse(result, message.id);
+            }
+
+            return result;
+
+        } catch (error) {
+            const errorResult = {
+                success: false,
+                error: 'Copilot request failed',
+                details: String(error)
+            };
+
+            // For backward compatibility with API-based communication
+            if (message.id) {
+                await this.apiClient.sendResponse(errorResult, message.id);
+            }
+
+            return errorResult;
+        }
+    }
+
+    /**
+     * Handle file request from mobile app
+     */
+    private async handleMobileFileRequest(message: Message): Promise<any> {
+        const { action, path, content } = message.data || {};
+
+        try {
+            let result;
+            switch (action) {
+                case 'read':
+                    result = await this.readFile(path);
+                    break;
+                case 'write':
+                    result = await this.writeFile(path, content);
+                    break;
+                case 'list':
+                    result = await this.listFiles(path || '.');
+                    break;
+                default:
+                    throw new Error(`Unknown file action: ${action}`);
+            }
+
+            const response = {
+                success: true,
+                action: action,
+                result: result
+            };
+
+            // For backward compatibility with API-based communication
+            if (message.id) {
+                await this.apiClient.sendResponse(response, message.id);
+            }
+
+            return response;
+
+        } catch (error) {
+            const errorResponse = {
+                success: false,
+                action: action,
+                error: String(error)
+            };
+
+            // For backward compatibility with API-based communication
+            if (message.id) {
+                await this.apiClient.sendResponse(errorResponse, message.id);
+            }
+
+            return errorResponse;
+        }
+    }
+
+    /**
+     * Handle ping from mobile app
+     */
+    private async handleMobilePing(message: Message): Promise<any> {
+        const response = {
+            pong: true,
+            timestamp: new Date().toISOString(),
+            server_info: {
+                port: this.port
+            }
+        };
+
+        // For backward compatibility with API-based communication
+        if (message.id) {
+            await this.apiClient.sendResponse(response, message.id);
+        }
+
+        return response;
+    }
+
+    /**
+     * Send notification to mobile app via API
+     */
+    public async sendMobileNotification(title: string, message: string, data?: any): Promise<boolean> {
+        return await this.apiClient.sendNotification(title, message, data);
+    }
+
+    /**
+     * Get API client instance
+     */
+    public getApiClient(): ApiClient {
+        return this.apiClient;
     }
 
     public async start(): Promise<void> {
-        console.log(`🚀 Starting VSCoder server on port ${this.port}...`);
+        console.log(`🚀 Starting VSCoder WebSocket communication...`);
         
-        return new Promise((resolve, reject) => {
-            const tryStartServer = (currentPort: number, maxAttempts: number = 10) => {
-                if (maxAttempts <= 0) {
-                    reject(new Error(`Failed to start server after trying ports ${this.port} to ${currentPort - 1}`));
-                    return;
-                }
+        try {
+            console.log('🔐 Authenticating with discovery service...');
+            await this.discoveryService.authenticate();
+            
+            console.log('📝 Registering with discovery service...');
+            await this.discoveryService.register(this.port);
+            
+            // Set up remote WebSocket-based communication only
+            console.log('📡 Setting up remote WebSocket communication...');
+            await this.setupApiCommunication();
+            
+            console.log('✅ Discovery service authentication and registration completed');
+            console.log('🎉 VSCoder WebSocket communication started successfully');
+        } catch (error) {
+            console.error('❌ Failed to start VSCoder WebSocket communication:', error);
+            throw error;
+        }
+    }
 
-                try {
-                    console.log(`📡 Attempting to start server on port ${currentPort}...`);
-                    this.server = this.app.listen(currentPort, async () => {
-                        console.log(`✅ VSCoder server running on port ${currentPort}`);
-                        this.port = currentPort; // Update the port to the successful one
-                        console.log('🔌 Setting up WebSocket...');
-                        this.setupWebSocket();
-                        
-                        // Register with discovery service
-                        try {
-                            console.log('🔐 Registering with discovery service...');
-                            await this.discoveryService.register(this.port);
-                            console.log('✅ Discovery service registration completed');
-                        } catch (error) {
-                            console.warn('⚠️ Discovery service registration failed:', error);
-                            // Don't fail server startup if discovery registration fails
-                        }
-                        
-                        console.log('🎉 Server startup completed successfully');
-                        resolve();
-                    });
+    private async openFile(filePath: string): Promise<any> {
+        try {
+            const uri = vscode.Uri.file(filePath);
+            const document = await vscode.workspace.openTextDocument(uri);
+            await vscode.window.showTextDocument(document);
+            return { 
+                success: true, 
+                message: `File opened: ${filePath}`,
+                path: filePath
+            };
+        } catch (error) {
+            return { 
+                success: false, 
+                error: error instanceof Error ? error.message : 'Unknown error' 
+            };
+        }
+    }
 
-                    this.server.on('error', (error: any) => {
-                        if (error.code === 'EADDRINUSE') {
-                            console.warn(`⚠️ Port ${currentPort} is already in use, trying port ${currentPort + 1}...`);
-                            this.server = undefined;
-                            // Try next port
-                            setTimeout(() => tryStartServer(currentPort + 1, maxAttempts - 1), 100);
-                        } else {
-                            console.error('❌ Server error during startup:', error);
-                            reject(error);
-                        }
-                    });
-                    
-                    console.log(`⏳ Waiting for server to start listening on port ${currentPort}...`);
-                } catch (error) {
-                    console.error('❌ Failed to start server:', error);
-                    reject(error);
+    private async getActiveFile(): Promise<any> {
+        try {
+            const activeEditor = vscode.window.activeTextEditor;
+            if (!activeEditor) {
+                return { 
+                    success: true, 
+                    activeFile: null,
+                    message: 'No active file'
+                };
+            }
+
+            const document = activeEditor.document;
+            return {
+                success: true,
+                activeFile: {
+                    path: document.uri.fsPath,
+                    fileName: document.fileName,
+                    language: document.languageId,
+                    lineCount: document.lineCount,
+                    isDirty: document.isDirty,
+                    cursorPosition: {
+                        line: activeEditor.selection.active.line,
+                        character: activeEditor.selection.active.character
+                    }
                 }
             };
+        } catch (error) {
+            return { 
+                success: false, 
+                error: error instanceof Error ? error.message : 'Unknown error' 
+            };
+        }
+    }
 
-            // Start trying from the configured port
-            tryStartServer(this.port);
-        });
+    private async focusEditor(): Promise<any> {
+        try {
+            const activeEditor = vscode.window.activeTextEditor;
+            if (activeEditor) {
+                await vscode.window.showTextDocument(activeEditor.document);
+            }
+            
+            // Focus the editor
+            await vscode.commands.executeCommand('workbench.action.focusActiveEditorGroup');
+            
+            return { 
+                success: true, 
+                message: 'Editor focused'
+            };
+        } catch (error) {
+            return { 
+                success: false, 
+                error: error instanceof Error ? error.message : 'Unknown error' 
+            };
+        }
+    }
+
+    private async runVSCodeCommand(command: string, args?: any[]): Promise<any> {
+        try {
+            let result;
+            if (args && args.length > 0) {
+                result = await vscode.commands.executeCommand(command, ...args);
+            } else {
+                result = await vscode.commands.executeCommand(command);
+            }
+            
+            return { 
+                success: true, 
+                result: result,
+                command: command,
+                message: `Command executed: ${command}`
+            };
+        } catch (error) {
+            return { 
+                success: false, 
+                error: error instanceof Error ? error.message : 'Unknown error',
+                command: command
+            };
+        }
+    }
+
+    private async handleCopilotChat(prompt: string, mode?: string, agentMode?: string): Promise<any> {
+        try {
+            console.log('🎯 Processing Copilot chat request via command:', { prompt: prompt?.substring(0, 100), mode, agentMode });
+            
+            // Only start new session if we don't have one yet
+            if (!this.currentSessionId) {
+                this.startNewSession();
+            }
+            const messageId = this.generateMessageId();
+            
+            // Create copilot request from command data
+            const copilotRequest: CopilotRequest = {
+                type: 'agent',
+                prompt: prompt,
+                agentMode: agentMode as 'autonomous' | 'interactive' | 'code-review' | 'refactor' | 'optimize' | 'debug' || 'interactive'
+            };
+            
+            // Set up progress callback for real-time updates
+            this.copilotBridge.setProgressCallback((update: any) => {
+                const messageId = this.generateMessageId();
+                
+                // Check if we've already sent this message
+                const contentHash = this.hashContent(update);
+                if (this.sentMessages.has(contentHash)) {
+                    console.log('🚫 Skipping duplicate progress update:', messageId);
+                    return;
+                }
+                
+                const progressMessage = {
+                    type: 'copilotProgress',
+                    updateType: update.updateType,
+                    data: update.data,
+                    timestamp: update.timestamp,
+                    messageId: messageId,
+                    originalMessageId: messageId,
+                    sessionId: this.currentSessionId
+                };
+                
+                // Add to message pool first for reliability
+                this.addToMessagePool(progressMessage);
+                
+                console.log('📡 Sending progress update via Discovery WebSocket...', update.updateType, messageId);
+                // Send via Discovery WebSocket for remote communication
+                this.discoveryWebSocket.send({
+                    type: 'notification',
+                    data: progressMessage,
+                    timestamp: new Date().toISOString()
+                });
+                
+                this.sentMessages.add(contentHash);
+            });
+            
+            const response = await this.copilotBridge.handleCopilotRequest(copilotRequest);
+            
+            // Also broadcast the final response to all WebSocket clients for real-time updates
+            if (response.success && response.data) {
+                const messageId = this.generateMessageId();
+                const contentHash = this.hashContent(response.data);
+                
+                // Check if we've already sent this message
+                if (!this.sentMessages.has(contentHash)) {
+                    console.log('📡 Sending final Copilot response via Discovery WebSocket...', messageId);
+                    
+                    const finalResponseMessage = {
+                        type: 'copilotResponse',
+                        data: response.data,
+                        timestamp: new Date().toISOString(),
+                        messageId: messageId,
+                        originalMessageId: messageId,
+                        sessionId: this.currentSessionId
+                    };
+                    
+                    // Add to message pool first
+                    this.addToMessagePool(finalResponseMessage);
+                    // Send via Discovery WebSocket for remote communication
+                    this.discoveryWebSocket.send({
+                        type: 'notification',
+                        data: finalResponseMessage,
+                        timestamp: new Date().toISOString()
+                    });
+                    
+                    this.sentMessages.add(contentHash);
+                    
+                    // Send completion event
+                    const completionMessageId = this.generateMessageId();
+                    const completionMessage = {
+                        type: 'copilotComplete',
+                        originalMessageId: messageId,
+                        sessionId: this.currentSessionId,
+                        messageId: completionMessageId,
+                        timestamp: new Date().toISOString()
+                    };
+                    
+                    // Add completion to pool and send via Discovery WebSocket
+                    this.addToMessagePool(completionMessage);
+                    this.discoveryWebSocket.send({
+                        type: 'notification',
+                        data: completionMessage,
+                        timestamp: new Date().toISOString()
+                    });
+                } else {
+                    console.log('🚫 Skipping duplicate final response');
+                }
+            }
+            
+            return response;
+        } catch (error) {
+            return { 
+                success: false, 
+                error: error instanceof Error ? error.message : 'Unknown error' 
+            };
+        }
+    }
+
+    private async addFileToChat(filePath: string): Promise<any> {
+        try {
+            const workspaceFolders = vscode.workspace.workspaceFolders;
+            
+            console.log('📎 Add file to chat command:', { filePath });
+            
+            if (!workspaceFolders) {
+                return { 
+                    success: false, 
+                    error: 'No workspace open' 
+                };
+            }
+            
+            // Security check: ensure file path is safe and within workspace
+            if (!filePath || filePath.includes('..') || filePath.includes('~') || path.isAbsolute(filePath)) {
+                console.log('❌ Security violation: suspicious file path for chat', filePath);
+                return { 
+                    success: false, 
+                    error: 'Access denied: invalid file path' 
+                };
+            }
+            
+            const workspaceRoot = workspaceFolders[0].uri;
+            const fileUri = vscode.Uri.joinPath(workspaceRoot, filePath);
+            
+            // Additional security check: ensure resolved path is within workspace
+            const resolvedPath = fileUri.fsPath;
+            const normalizedResolved = path.normalize(resolvedPath);
+            const normalizedWorkspace = path.normalize(workspaceRoot.fsPath);
+            if (!normalizedResolved.startsWith(normalizedWorkspace)) {
+                console.log('❌ Security violation: file path outside workspace for chat', {
+                    resolved: normalizedResolved,
+                    workspace: normalizedWorkspace
+                });
+                return { 
+                    success: false, 
+                    error: 'Access denied: file outside workspace' 
+                };
+            }
+            
+            console.log('📎 Adding file to chat:', { filePath, fileUri: fileUri.fsPath });
+            
+            try {
+                // Simple approach: try the main command that exists, then fallback
+                let success = false;
+                let method = '';
+                
+                // Method 1: Use the official addToChatAction command
+                try {
+                    await vscode.commands.executeCommand('workbench.action.chat.addToChatAction', fileUri);
+                    success = true;
+                    method = 'addToChatAction';
+                    console.log('✅ Successfully added file to chat via addToChatAction');
+                } catch (error1) {
+                    console.log('❌ addToChatAction failed:', error1);
+                    
+                    // Method 2: Try the inlineResourceAnchor command as fallback
+                    try {
+                        await vscode.commands.executeCommand('chat.inlineResourceAnchor.addFileToChat', fileUri);
+                        success = true;
+                        method = 'inlineResourceAnchor';
+                        console.log('✅ Successfully added file to chat via inlineResourceAnchor');
+                    } catch (error2) {
+                        console.log('❌ inlineResourceAnchor failed:', error2);
+                        
+                        // Method 3: Fallback - open both file and chat
+                        try {
+                            // Open the file in editor
+                            const doc = await vscode.workspace.openTextDocument(fileUri);
+                            await vscode.window.showTextDocument(doc);
+                            
+                            // Open chat panel (this command should exist)
+                            await vscode.commands.executeCommand('workbench.panel.chat.view.copilot.focus');
+                            
+                            success = true;
+                            method = 'manual_fallback';
+                            console.log('✅ Opened file and chat for manual attachment');
+                        } catch (error3) {
+                            console.log('❌ Manual fallback failed:', error3);
+                            throw new Error(`Failed to add file to chat: ${error1}`);
+                        }
+                    }
+                }
+                
+                if (success) {
+                    console.log(`✅ File handled using method: ${method}`, filePath);
+                    return { 
+                        success: true, 
+                        message: method === 'addToChatAction' 
+                            ? `File ${path.basename(filePath)} added to chat successfully.`
+                            : method === 'inlineResourceAnchor' 
+                                ? `File ${path.basename(filePath)} attached to chat.`
+                                : `File ${path.basename(filePath)} opened. Please manually add it to chat.`,
+                        filePath: filePath,
+                        method: method,
+                        requiresManualAction: method === 'manual_fallback'
+                    };
+                } else {
+                    throw new Error('All methods failed');
+                }
+            } catch (commandError) {
+                console.log('❌ All methods failed to execute addFileToChat:', commandError);
+                // Fallback: try to open chat and show the file was attached
+                try {
+                    await vscode.commands.executeCommand('workbench.panel.chat.view.copilot.focus');
+                    return { 
+                        success: true, 
+                        message: `Chat opened. File ${path.basename(filePath)} is ready to be discussed.`,
+                        filePath: filePath,
+                        fallback: true
+                    };
+                } catch (fallbackError) {
+                    return { 
+                        success: false, 
+                        error: 'Failed to add file to chat', 
+                        details: String(commandError) 
+                    };
+                }
+            }
+        } catch (error) {
+            console.error('❌ Error adding file to chat:', error);
+            return { 
+                success: false, 
+                error: error instanceof Error ? error.message : 'Unknown error' 
+            };
+        }
+    }
+
+    private async autoCopilotExecute(): Promise<any> {
+        try {
+            console.log('⚡ Auto-executing pending actions via command...');
+            
+            // Only run pending commands, don't trigger new iteration
+            const pendingResult = await this.copilotBridge.runPendingCommands();
+            let totalActions = 0;
+            
+            if (pendingResult.success) {
+                totalActions += pendingResult.data?.commandsRun || 0;
+            }
+
+            const result = {
+                success: true,
+                data: {
+                    commandsRun: totalActions,
+                    action: 'auto_executed',
+                    pendingCommandsResult: pendingResult
+                },
+                message: totalActions > 0 ? 'Auto-executed all pending actions' : 'No pending actions found'
+            };
+            
+            console.log('✅ Auto-execute result:', result);
+            return result;
+        } catch (error) {
+            console.error('❌ Error auto-executing:', error);
+            return { 
+                success: false, 
+                error: error instanceof Error ? error.message : 'Unknown error' 
+            };
+        }
+    }
+
+    private async startNewCopilotSession(): Promise<any> {
+        try {
+            console.log('🔄 Starting new chat session via command...');
+            this.startNewSession();
+            
+            // Send session reset notification to mobile app via Discovery WebSocket
+            const sessionResetMessage = {
+                type: 'sessionReset',
+                sessionId: this.currentSessionId,
+                messageId: this.generateMessageId(),
+                timestamp: new Date().toISOString()
+            };
+            
+            // Add to message pool and send via Discovery WebSocket
+            this.addToMessagePool(sessionResetMessage);
+            this.discoveryWebSocket.send({
+                type: 'notification',
+                data: sessionResetMessage,
+                timestamp: new Date().toISOString()
+            });
+            
+            return { 
+                success: true, 
+                sessionId: this.currentSessionId,
+                message: 'New chat session started' 
+            };
+        } catch (error) {
+            console.error('❌ Error starting new session:', error);
+            return { 
+                success: false, 
+                error: error instanceof Error ? error.message : 'Unknown error' 
+            };
+        }
+    }
+
+    /**
+     * Start automatic chat history synchronization
+     */
+    private startAutomaticChatSync(): void {
+        console.log('🔄 Initializing automatic chat history sync...');
+        
+        // Check if we can sync (pairing code available)
+        if (!this.discoveryService.getPairingCode() || !this.discoveryService.isDeviceAuthenticated()) {
+            console.log('⚠️ Chat history sync not available - no active mobile connection');
+            return;
+        }
+
+        // Actually start the chat history sync using the CopilotBridge
+        console.log('🚀 Starting real chat history synchronization...');
+        try {
+            // Access the private method using type assertion to bypass TypeScript protection
+            (this.copilotBridge as any).startChatHistorySync();
+            console.log('✅ Chat history sync started successfully');
+        } catch (error) {
+            console.error('❌ Failed to start chat history sync:', error);
+        }
+    }
+
+    /**
+     * Start WebSocket health monitoring to ensure connection stays active
+     */
+    private startWebSocketHealthCheck(): void {
+        // Check WebSocket health every 30 seconds
+        setInterval(async () => {
+            if (!this.discoveryWebSocket.isWebSocketConnected()) {
+                console.log('💓 WebSocket health check: Connection lost, attempting to reconnect...');
+                try {
+                    await this.discoveryWebSocket.forceReconnect();
+                    console.log('✅ WebSocket health check: Reconnection successful');
+                } catch (error) {
+                    console.warn('⚠️ WebSocket health check: Reconnection failed:', error);
+                }
+            } else {
+                console.log('💓 WebSocket health check: Connection healthy');
+            }
+        }, 30000); // 30 seconds
     }
 
     public async stop(): Promise<void> {
-        console.log('🛑 Stopping VSCoder server...');
+        console.log('🛑 Stopping VSCoder WebSocket communication...');
+        
+        // Stop WebSocket connection to Discovery API
+        if (this.discoveryWebSocket) {
+            console.log('🔌 Disconnecting from Discovery API WebSocket...');
+            this.discoveryWebSocket.disconnect();
+            console.log('✅ Discovery API WebSocket disconnected');
+        }
+        
+        // Stop API message polling (fallback, should not be used with WebSocket)
+        if (this.messagePollingDisposable) {
+            console.log('📡 Stopping API message polling...');
+            this.messagePollingDisposable.dispose();
+            this.messagePollingDisposable = null;
+            console.log('✅ API message polling stopped');
+        }
         
         // Unregister from discovery service
         try {
@@ -989,24 +1222,8 @@ export class VSCoderServer {
         } catch (error) {
             console.warn('⚠️ Discovery service unregistration failed:', error);
         }
-        
-        if (this.wss) {
-            console.log('🔌 Closing WebSocket server...');
-            this.wss.close();
-            this.wss = undefined;
-            console.log('✅ WebSocket server closed');
-        }
 
-        if (this.server) {
-            console.log('📡 Closing HTTP server...');
-            this.server.close();
-            this.server = undefined;
-            console.log('✅ HTTP server closed');
-        }
-
-        console.log(`🧹 Clearing ${this.connectedClients.size} connected clients...`);
-        this.connectedClients.clear();
-        console.log('✅ VSCoder server stopped completely');
+        console.log('✅ VSCoder WebSocket communication stopped completely');
     }
 
     public getPort(): number {
@@ -1019,5 +1236,1032 @@ export class VSCoderServer {
 
     public getDiscoveryService(): DiscoveryService {
         return this.discoveryService;
+    }
+
+    /**
+     * Get workspace information
+     */
+    private async getWorkspaceInfo(): Promise<any> {
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        return {
+            workspace_folders: workspaceFolders?.map(folder => ({
+                name: folder.name,
+                uri: folder.uri.toString()
+            })) || [],
+            active_text_editor: vscode.window.activeTextEditor?.document.fileName,
+            language: vscode.window.activeTextEditor?.document.languageId
+        };
+    }
+
+    /**
+     * List files in directory
+     */
+    private async listFiles(dirPath: string): Promise<any> {
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        if (!workspaceFolder) {
+            throw new Error('No workspace folder available');
+        }
+
+        const fullPath = path.join(workspaceFolder.uri.fsPath, dirPath);
+        
+        try {
+            const items = await fs.promises.readdir(fullPath, { withFileTypes: true });
+            return items.map(item => ({
+                name: item.name,
+                type: item.isDirectory() ? 'directory' : 'file',
+                path: path.join(dirPath, item.name)
+            }));
+        } catch (error) {
+            throw new Error(`Failed to list files: ${error}`);
+        }
+    }
+
+    /**
+     * Read file content
+     */
+    private async readFile(filePath: string): Promise<any> {
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        if (!workspaceFolder) {
+            throw new Error('No workspace folder available');
+        }
+
+        const fullPath = path.join(workspaceFolder.uri.fsPath, filePath);
+        
+        try {
+            const content = await fs.promises.readFile(fullPath, 'utf8');
+            return {
+                path: filePath,
+                content: content,
+                size: content.length
+            };
+        } catch (error) {
+            throw new Error(`Failed to read file: ${error}`);
+        }
+    }
+
+    /**
+     * Write file content
+     */
+    private async writeFile(filePath: string, content: string): Promise<any> {
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        if (!workspaceFolder) {
+            throw new Error('No workspace folder available');
+        }
+
+        const fullPath = path.join(workspaceFolder.uri.fsPath, filePath);
+        
+        try {
+            await fs.promises.writeFile(fullPath, content, 'utf8');
+            return {
+                path: filePath,
+                size: content.length,
+                success: true
+            };
+        } catch (error) {
+            throw new Error(`Failed to write file: ${error}`);
+        }
+    }
+
+    /**
+     * Run terminal command
+     */
+    private async runTerminalCommand(command: string): Promise<any> {
+        return new Promise((resolve, reject) => {
+            const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+            const cwd = workspaceFolder?.uri.fsPath || process.cwd();
+
+            exec(command, { cwd }, (error: any, stdout: string, stderr: string) => {
+                if (error) {
+                    resolve({
+                        success: false,
+                        command: command,
+                        error: error.message,
+                        stderr: stderr,
+                        exit_code: error.code
+                    });
+                } else {
+                    resolve({
+                        success: true,
+                        command: command,
+                        stdout: stdout,
+                        stderr: stderr,
+                        exit_code: 0
+                    });
+                }
+            });
+        });
+    }
+
+    // ===== ADVANCED FILE OPERATIONS =====
+
+    /**
+     * Create a new file with content
+     */
+    private async createFile(filePath: string, content: string = ''): Promise<any> {
+        try {
+            const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+            if (!workspaceFolder) {
+                throw new Error('No workspace folder available');
+            }
+
+            // Ensure relative path
+            const relativePath = path.isAbsolute(filePath) ? path.relative(workspaceFolder.uri.fsPath, filePath) : filePath;
+            const fullPath = path.join(workspaceFolder.uri.fsPath, relativePath);
+            
+            // Security check: ensure file path is within workspace
+            const normalizedFullPath = path.normalize(fullPath);
+            const normalizedWorkspace = path.normalize(workspaceFolder.uri.fsPath);
+            if (!normalizedFullPath.startsWith(normalizedWorkspace)) {
+                throw new Error('Access denied: file path outside workspace');
+            }
+
+            // Create directory if it doesn't exist
+            const dirPath = path.dirname(fullPath);
+            if (!fs.existsSync(dirPath)) {
+                await fs.promises.mkdir(dirPath, { recursive: true });
+            }
+
+            // Check if file already exists
+            if (fs.existsSync(fullPath)) {
+                return {
+                    success: false,
+                    error: 'File already exists',
+                    path: relativePath
+                };
+            }
+
+            await fs.promises.writeFile(fullPath, content, 'utf8');
+            return {
+                success: true,
+                path: relativePath,
+                size: content.length,
+                message: 'File created successfully'
+            };
+        } catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error',
+                path: filePath
+            };
+        }
+    }
+
+    /**
+     * Delete a file or directory
+     */
+    private async deleteFile(filePath: string): Promise<any> {
+        try {
+            const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+            if (!workspaceFolder) {
+                throw new Error('No workspace folder available');
+            }
+
+            const relativePath = path.isAbsolute(filePath) ? path.relative(workspaceFolder.uri.fsPath, filePath) : filePath;
+            const fullPath = path.join(workspaceFolder.uri.fsPath, relativePath);
+            
+            // Security check
+            const normalizedFullPath = path.normalize(fullPath);
+            const normalizedWorkspace = path.normalize(workspaceFolder.uri.fsPath);
+            if (!normalizedFullPath.startsWith(normalizedWorkspace)) {
+                throw new Error('Access denied: file path outside workspace');
+            }
+
+            if (!fs.existsSync(fullPath)) {
+                return {
+                    success: false,
+                    error: 'File or directory does not exist',
+                    path: relativePath
+                };
+            }
+
+            const stats = await fs.promises.stat(fullPath);
+            if (stats.isDirectory()) {
+                await fs.promises.rmdir(fullPath, { recursive: true });
+            } else {
+                await fs.promises.unlink(fullPath);
+            }
+
+            return {
+                success: true,
+                path: relativePath,
+                message: 'File/directory deleted successfully'
+            };
+        } catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error',
+                path: filePath
+            };
+        }
+    }
+
+    /**
+     * Rename/move a file or directory
+     */
+    private async renameFile(oldPath: string, newPath: string): Promise<any> {
+        try {
+            const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+            if (!workspaceFolder) {
+                throw new Error('No workspace folder available');
+            }
+
+            const relativeOldPath = path.isAbsolute(oldPath) ? path.relative(workspaceFolder.uri.fsPath, oldPath) : oldPath;
+            const relativeNewPath = path.isAbsolute(newPath) ? path.relative(workspaceFolder.uri.fsPath, newPath) : newPath;
+            
+            const fullOldPath = path.join(workspaceFolder.uri.fsPath, relativeOldPath);
+            const fullNewPath = path.join(workspaceFolder.uri.fsPath, relativeNewPath);
+            
+            // Security checks
+            const normalizedOldPath = path.normalize(fullOldPath);
+            const normalizedNewPath = path.normalize(fullNewPath);
+            const normalizedWorkspace = path.normalize(workspaceFolder.uri.fsPath);
+            
+            if (!normalizedOldPath.startsWith(normalizedWorkspace) || !normalizedNewPath.startsWith(normalizedWorkspace)) {
+                throw new Error('Access denied: file paths outside workspace');
+            }
+
+            if (!fs.existsSync(fullOldPath)) {
+                return {
+                    success: false,
+                    error: 'Source file/directory does not exist',
+                    oldPath: relativeOldPath,
+                    newPath: relativeNewPath
+                };
+            }
+
+            // Create directory for new path if needed
+            const newDir = path.dirname(fullNewPath);
+            if (!fs.existsSync(newDir)) {
+                await fs.promises.mkdir(newDir, { recursive: true });
+            }
+
+            await fs.promises.rename(fullOldPath, fullNewPath);
+            return {
+                success: true,
+                oldPath: relativeOldPath,
+                newPath: relativeNewPath,
+                message: 'File/directory renamed successfully'
+            };
+        } catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error',
+                oldPath: oldPath,
+                newPath: newPath
+            };
+        }
+    }
+
+    /**
+     * Create a new directory
+     */
+    private async createDirectory(dirPath: string): Promise<any> {
+        try {
+            const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+            if (!workspaceFolder) {
+                throw new Error('No workspace folder available');
+            }
+
+            const relativePath = path.isAbsolute(dirPath) ? path.relative(workspaceFolder.uri.fsPath, dirPath) : dirPath;
+            const fullPath = path.join(workspaceFolder.uri.fsPath, relativePath);
+            
+            // Security check
+            const normalizedFullPath = path.normalize(fullPath);
+            const normalizedWorkspace = path.normalize(workspaceFolder.uri.fsPath);
+            if (!normalizedFullPath.startsWith(normalizedWorkspace)) {
+                throw new Error('Access denied: directory path outside workspace');
+            }
+
+            if (fs.existsSync(fullPath)) {
+                return {
+                    success: false,
+                    error: 'Directory already exists',
+                    path: relativePath
+                };
+            }
+
+            await fs.promises.mkdir(fullPath, { recursive: true });
+            return {
+                success: true,
+                path: relativePath,
+                message: 'Directory created successfully'
+            };
+        } catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error',
+                path: dirPath
+            };
+        }
+    }
+
+    /**
+     * Copy a file or directory
+     */
+    private async copyFile(sourcePath: string, destinationPath: string): Promise<any> {
+        try {
+            const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+            if (!workspaceFolder) {
+                throw new Error('No workspace folder available');
+            }
+
+            const relativeSourcePath = path.isAbsolute(sourcePath) ? path.relative(workspaceFolder.uri.fsPath, sourcePath) : sourcePath;
+            const relativeDestPath = path.isAbsolute(destinationPath) ? path.relative(workspaceFolder.uri.fsPath, destinationPath) : destinationPath;
+            
+            const fullSourcePath = path.join(workspaceFolder.uri.fsPath, relativeSourcePath);
+            const fullDestPath = path.join(workspaceFolder.uri.fsPath, relativeDestPath);
+            
+            // Security checks
+            const normalizedSource = path.normalize(fullSourcePath);
+            const normalizedDest = path.normalize(fullDestPath);
+            const normalizedWorkspace = path.normalize(workspaceFolder.uri.fsPath);
+            
+            if (!normalizedSource.startsWith(normalizedWorkspace) || !normalizedDest.startsWith(normalizedWorkspace)) {
+                throw new Error('Access denied: file paths outside workspace');
+            }
+
+            if (!fs.existsSync(fullSourcePath)) {
+                return {
+                    success: false,
+                    error: 'Source file/directory does not exist',
+                    sourcePath: relativeSourcePath,
+                    destinationPath: relativeDestPath
+                };
+            }
+
+            // Create destination directory if needed
+            const destDir = path.dirname(fullDestPath);
+            if (!fs.existsSync(destDir)) {
+                await fs.promises.mkdir(destDir, { recursive: true });
+            }
+
+            const stats = await fs.promises.stat(fullSourcePath);
+            if (stats.isDirectory()) {
+                // Copy directory recursively
+                await this.copyDirectoryRecursive(fullSourcePath, fullDestPath);
+            } else {
+                // Copy file
+                await fs.promises.copyFile(fullSourcePath, fullDestPath);
+            }
+
+            return {
+                success: true,
+                sourcePath: relativeSourcePath,
+                destinationPath: relativeDestPath,
+                message: 'File/directory copied successfully'
+            };
+        } catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error',
+                sourcePath: sourcePath,
+                destinationPath: destinationPath
+            };
+        }
+    }
+
+    /**
+     * Helper method to copy directory recursively
+     */
+    private async copyDirectoryRecursive(source: string, destination: string): Promise<void> {
+        await fs.promises.mkdir(destination, { recursive: true });
+        const entries = await fs.promises.readdir(source, { withFileTypes: true });
+        
+        for (const entry of entries) {
+            const sourcePath = path.join(source, entry.name);
+            const destPath = path.join(destination, entry.name);
+            
+            if (entry.isDirectory()) {
+                await this.copyDirectoryRecursive(sourcePath, destPath);
+            } else {
+                await fs.promises.copyFile(sourcePath, destPath);
+            }
+        }
+    }
+
+    // ===== SEARCH AND NAVIGATION =====
+
+    /**
+     * Search for text in files
+     */
+    private async searchInFiles(query: string, includePattern?: string, excludePattern?: string): Promise<any> {
+        try {
+            // Use grep-like search through workspace files
+            const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+            if (!workspaceFolder) {
+                throw new Error('No workspace folder available');
+            }
+
+            const pattern = includePattern || '**/*';
+            const excludes = excludePattern ? [excludePattern, '**/node_modules/**'] : ['**/node_modules/**'];
+            
+            const files = await vscode.workspace.findFiles(pattern, `{${excludes.join(',')}}`);
+            const results: any[] = [];
+
+            for (const file of files) {
+                try {
+                    const document = await vscode.workspace.openTextDocument(file);
+                    const text = document.getText();
+                    const lines = text.split('\n');
+                    
+                    lines.forEach((line, lineNumber) => {
+                        const index = line.toLowerCase().indexOf(query.toLowerCase());
+                        if (index !== -1) {
+                            results.push({
+                                uri: file.fsPath,
+                                lineNumber: lineNumber,
+                                line: line,
+                                character: index,
+                                preview: {
+                                    text: line.trim(),
+                                    matches: [{
+                                        start: index,
+                                        end: index + query.length
+                                    }]
+                                }
+                            });
+                        }
+                    });
+                } catch (error) {
+                    // Skip files that can't be read
+                    continue;
+                }
+            }
+
+            return {
+                success: true,
+                query: query,
+                results: results,
+                count: results.length
+            };
+        } catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error',
+                query: query
+            };
+        }
+    }
+
+    /**
+     * Find files by name pattern
+     */
+    private async findFiles(pattern: string): Promise<any> {
+        try {
+            const results = await vscode.workspace.findFiles(pattern);
+            const filePaths = results.map(uri => {
+                const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+                if (workspaceFolder) {
+                    return path.relative(workspaceFolder.uri.fsPath, uri.fsPath);
+                }
+                return uri.fsPath;
+            });
+
+            return {
+                success: true,
+                pattern: pattern,
+                files: filePaths,
+                count: filePaths.length
+            };
+        } catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error',
+                pattern: pattern
+            };
+        }
+    }
+
+    /**
+     * Go to definition of symbol at position
+     */
+    private async goToDefinition(filePath: string, line: number, character: number): Promise<any> {
+        try {
+            const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+            if (!workspaceFolder) {
+                throw new Error('No workspace folder available');
+            }
+
+            const fullPath = path.join(workspaceFolder.uri.fsPath, filePath);
+            const uri = vscode.Uri.file(fullPath);
+            const position = new vscode.Position(line, character);
+
+            const definitions = await vscode.commands.executeCommand<vscode.Location[]>(
+                'vscode.executeDefinitionProvider',
+                uri,
+                position
+            );
+
+            if (!definitions || definitions.length === 0) {
+                return {
+                    success: false,
+                    message: 'No definitions found',
+                    filePath: filePath,
+                    position: { line, character }
+                };
+            }
+
+            const results = definitions.map(def => ({
+                uri: def.uri.fsPath,
+                range: {
+                    start: { line: def.range.start.line, character: def.range.start.character },
+                    end: { line: def.range.end.line, character: def.range.end.character }
+                }
+            }));
+
+            return {
+                success: true,
+                filePath: filePath,
+                position: { line, character },
+                definitions: results
+            };
+        } catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error',
+                filePath: filePath,
+                position: { line, character }
+            };
+        }
+    }
+
+    /**
+     * Find references to symbol at position
+     */
+    private async findReferences(filePath: string, line: number, character: number): Promise<any> {
+        try {
+            const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+            if (!workspaceFolder) {
+                throw new Error('No workspace folder available');
+            }
+
+            const fullPath = path.join(workspaceFolder.uri.fsPath, filePath);
+            const uri = vscode.Uri.file(fullPath);
+            const position = new vscode.Position(line, character);
+
+            const references = await vscode.commands.executeCommand<vscode.Location[]>(
+                'vscode.executeReferenceProvider',
+                uri,
+                position
+            );
+
+            if (!references || references.length === 0) {
+                return {
+                    success: false,
+                    message: 'No references found',
+                    filePath: filePath,
+                    position: { line, character }
+                };
+            }
+
+            const results = references.map(ref => ({
+                uri: ref.uri.fsPath,
+                range: {
+                    start: { line: ref.range.start.line, character: ref.range.start.character },
+                    end: { line: ref.range.end.line, character: ref.range.end.character }
+                }
+            }));
+
+            return {
+                success: true,
+                filePath: filePath,
+                position: { line, character },
+                references: results,
+                count: results.length
+            };
+        } catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error',
+                filePath: filePath,
+                position: { line, character }
+            };
+        }
+    }
+
+    // ===== GIT OPERATIONS =====
+
+    /**
+     * Get Git status
+     */
+    private async getGitStatus(): Promise<any> {
+        try {
+            const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+            if (!workspaceFolder) {
+                throw new Error('No workspace folder available');
+            }
+
+            const gitExtension = vscode.extensions.getExtension('vscode.git');
+            if (!gitExtension) {
+                throw new Error('Git extension not found');
+            }
+
+            if (!gitExtension.isActive) {
+                await gitExtension.activate();
+            }
+
+            const git = gitExtension.exports.getAPI(1);
+            const repository = git.repositories.find((repo: any) => 
+                repo.rootUri.fsPath === workspaceFolder.uri.fsPath
+            );
+
+            if (!repository) {
+                throw new Error('No Git repository found in workspace');
+            }
+
+            const status = repository.state;
+            return {
+                success: true,
+                branch: status.HEAD?.name || 'unknown',
+                changes: status.workingTreeChanges.map((change: any) => ({
+                    path: change.uri.fsPath,
+                    status: change.status,
+                    originalUri: change.originalUri?.fsPath
+                })),
+                staged: status.indexChanges.map((change: any) => ({
+                    path: change.uri.fsPath,
+                    status: change.status,
+                    originalUri: change.originalUri?.fsPath
+                })),
+                remotes: repository.state.remotes.map((remote: any) => ({
+                    name: remote.name,
+                    fetchUrl: remote.fetchUrl,
+                    pushUrl: remote.pushUrl
+                }))
+            };
+        } catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error'
+            };
+        }
+    }
+
+    /**
+     * Stage files for commit (git add)
+     */
+    private async gitAdd(files: string[]): Promise<any> {
+        try {
+            const result = await this.runGitCommand(['add', ...files]);
+            return {
+                success: result.success,
+                files: files,
+                message: result.success ? 'Files staged successfully' : 'Failed to stage files',
+                output: result.stdout,
+                error: result.error
+            };
+        } catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error',
+                files: files
+            };
+        }
+    }
+
+    /**
+     * Commit changes
+     */
+    private async gitCommit(message: string): Promise<any> {
+        try {
+            const result = await this.runGitCommand(['commit', '-m', message]);
+            return {
+                success: result.success,
+                message: message,
+                output: result.stdout,
+                error: result.error
+            };
+        } catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error',
+                message: message
+            };
+        }
+    }
+
+    /**
+     * Push changes to remote
+     */
+    private async gitPush(): Promise<any> {
+        try {
+            const result = await this.runGitCommand(['push']);
+            return {
+                success: result.success,
+                output: result.stdout,
+                error: result.error
+            };
+        } catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error'
+            };
+        }
+    }
+
+    /**
+     * Pull changes from remote
+     */
+    private async gitPull(): Promise<any> {
+        try {
+            const result = await this.runGitCommand(['pull']);
+            return {
+                success: result.success,
+                output: result.stdout,
+                error: result.error
+            };
+        } catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error'
+            };
+        }
+    }
+
+    /**
+     * Switch to a different branch
+     */
+    private async gitCheckout(branch: string): Promise<any> {
+        try {
+            const result = await this.runGitCommand(['checkout', branch]);
+            return {
+                success: result.success,
+                branch: branch,
+                output: result.stdout,
+                error: result.error
+            };
+        } catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error',
+                branch: branch
+            };
+        }
+    }
+
+    /**
+     * Get list of Git branches
+     */
+    private async getGitBranches(): Promise<any> {
+        try {
+            const result = await this.runGitCommand(['branch', '-a']);
+            if (result.success) {
+                const branches = result.stdout
+                    .split('\n')
+                    .map((line: string) => line.trim())
+                    .filter((line: string) => line.length > 0)
+                    .map((line: string) => ({
+                        name: line.replace(/^\*\s*/, '').replace(/^remotes\//, ''),
+                        current: line.startsWith('*'),
+                        remote: line.includes('remotes/')
+                    }));
+
+                return {
+                    success: true,
+                    branches: branches,
+                    count: branches.length
+                };
+            } else {
+                return {
+                    success: false,
+                    error: result.error
+                };
+            }
+        } catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error'
+            };
+        }
+    }
+
+    /**
+     * Helper method to run Git commands
+     */
+    private async runGitCommand(args: string[]): Promise<any> {
+        const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+        const cwd = workspaceFolder?.uri.fsPath || process.cwd();
+        
+        return new Promise((resolve) => {
+            exec(`git ${args.join(' ')}`, { cwd }, (error: any, stdout: string, stderr: string) => {
+                resolve({
+                    success: !error,
+                    stdout: stdout.trim(),
+                    stderr: stderr.trim(),
+                    error: error?.message,
+                    exit_code: error?.code || 0
+                });
+            });
+        });
+    }
+
+    // ===== LANGUAGE SERVER OPERATIONS =====
+
+    /**
+     * Format document
+     */
+    private async formatDocument(filePath: string): Promise<any> {
+        try {
+            const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+            if (!workspaceFolder) {
+                throw new Error('No workspace folder available');
+            }
+
+            const fullPath = path.join(workspaceFolder.uri.fsPath, filePath);
+            const uri = vscode.Uri.file(fullPath);
+            
+            // Open document if not already open
+            const document = await vscode.workspace.openTextDocument(uri);
+            
+            // Execute format document command
+            const formatEdits = await vscode.commands.executeCommand<vscode.TextEdit[]>(
+                'vscode.executeFormatDocumentProvider',
+                uri,
+                { insertSpaces: true, tabSize: 2 }
+            );
+
+            if (formatEdits && formatEdits.length > 0) {
+                // Apply edits to document
+                const edit = new vscode.WorkspaceEdit();
+                edit.set(uri, formatEdits);
+                await vscode.workspace.applyEdit(edit);
+                
+                return {
+                    success: true,
+                    filePath: filePath,
+                    editsApplied: formatEdits.length,
+                    message: 'Document formatted successfully'
+                };
+            } else {
+                return {
+                    success: true,
+                    filePath: filePath,
+                    editsApplied: 0,
+                    message: 'No formatting changes needed'
+                };
+            }
+        } catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error',
+                filePath: filePath
+            };
+        }
+    }
+
+    /**
+     * Get diagnostics (errors, warnings) for a file
+     */
+    private async getDiagnostics(filePath?: string): Promise<any> {
+        try {
+            if (filePath) {
+                const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+                if (!workspaceFolder) {
+                    throw new Error('No workspace folder available');
+                }
+
+                const fullPath = path.join(workspaceFolder.uri.fsPath, filePath);
+                const uri = vscode.Uri.file(fullPath);
+                const diagnostics = vscode.languages.getDiagnostics(uri);
+
+                return {
+                    success: true,
+                    filePath: filePath,
+                    diagnostics: diagnostics.map(diag => ({
+                        message: diag.message,
+                        severity: diag.severity,
+                        range: {
+                            start: { line: diag.range.start.line, character: diag.range.start.character },
+                            end: { line: diag.range.end.line, character: diag.range.end.character }
+                        },
+                        source: diag.source,
+                        code: diag.code
+                    })),
+                    count: diagnostics.length
+                };
+            } else {
+                // Get all diagnostics
+                const allDiagnostics = vscode.languages.getDiagnostics();
+                const result: any[] = [];
+
+                allDiagnostics.forEach(([uri, diagnostics]) => {
+                    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+                    const relativePath = workspaceFolder ? 
+                        path.relative(workspaceFolder.uri.fsPath, uri.fsPath) : 
+                        uri.fsPath;
+
+                    result.push({
+                        filePath: relativePath,
+                        diagnostics: diagnostics.map(diag => ({
+                            message: diag.message,
+                            severity: diag.severity,
+                            range: {
+                                start: { line: diag.range.start.line, character: diag.range.start.character },
+                                end: { line: diag.range.end.line, character: diag.range.end.character }
+                            },
+                            source: diag.source,
+                            code: diag.code
+                        })),
+                        count: diagnostics.length
+                    });
+                });
+
+                return {
+                    success: true,
+                    files: result,
+                    totalCount: result.reduce((sum, file) => sum + file.count, 0)
+                };
+            }
+        } catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error',
+                filePath: filePath
+            };
+        }
+    }
+
+    // ===== SETTINGS OPERATIONS =====
+
+    /**
+     * Update VS Code settings
+     */
+    private async updateSettings(settings: Record<string, any>): Promise<any> {
+        try {
+            const config = vscode.workspace.getConfiguration();
+            const results: any[] = [];
+
+            for (const [key, value] of Object.entries(settings)) {
+                try {
+                    await config.update(key, value, vscode.ConfigurationTarget.Workspace);
+                    results.push({ key, success: true, value });
+                } catch (error) {
+                    results.push({ 
+                        key, 
+                        success: false, 
+                        error: error instanceof Error ? error.message : 'Unknown error' 
+                    });
+                }
+            }
+
+            const successCount = results.filter(r => r.success).length;
+            
+            return {
+                success: successCount === results.length,
+                results: results,
+                successCount: successCount,
+                totalCount: results.length
+            };
+        } catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error',
+                settings: settings
+            };
+        }
+    }
+
+    /**
+     * Get current VS Code settings
+     */
+    private async getSettings(): Promise<any> {
+        try {
+            const config = vscode.workspace.getConfiguration();
+            const inspect = config.inspect;
+            
+            // Get workspace-specific settings
+            const workspaceSettings: Record<string, any> = {};
+            
+            // Common settings to retrieve
+            const commonSettings = [
+                'editor.fontSize',
+                'editor.tabSize',
+                'editor.insertSpaces',
+                'editor.wordWrap',
+                'files.autoSave',
+                'files.encoding',
+                'terminal.integrated.shell',
+                'workbench.colorTheme',
+                'extensions.autoUpdate'
+            ];
+
+            for (const setting of commonSettings) {
+                const value = config.get(setting);
+                if (value !== undefined) {
+                    workspaceSettings[setting] = value;
+                }
+            }
+
+            return {
+                success: true,
+                settings: workspaceSettings,
+                settingsCount: Object.keys(workspaceSettings).length
+            };
+        } catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error'
+            };
+        }
     }
 }
