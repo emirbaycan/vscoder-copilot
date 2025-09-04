@@ -24,10 +24,10 @@ class CopilotTester {
 
         try {
             const response = await this.copilotBridge.handleCopilotRequest(testRequest);
-            vscode.window.showInformationMessage(`Agent Autonomous Test: ${response.success ? 'Success' : 'Failed'}`);
+            console.log(`Agent Autonomous Test: ${response.success ? 'Success' : 'Failed'}`);
             console.log('Agent Autonomous Response:', response);
         } catch (error) {
-            vscode.window.showErrorMessage(`Agent Autonomous Test Failed: ${error}`);
+            console.error(`Agent Autonomous Test Failed: ${error}`);
         }
     }
 
@@ -44,10 +44,10 @@ class CopilotTester {
 
         try {
             const response = await this.copilotBridge.handleCopilotRequest(testRequest);
-            vscode.window.showInformationMessage(`Agent Interactive Test: ${response.success ? 'Success' : 'Failed'}`);
+            console.log(`Agent Interactive Test: ${response.success ? 'Success' : 'Failed'}`);
             console.log('Agent Interactive Response:', response);
         } catch (error) {
-            vscode.window.showErrorMessage(`Agent Interactive Test Failed: ${error}`);
+            console.error(`Agent Interactive Test Failed: ${error}`);
         }
     }
 
@@ -64,10 +64,10 @@ class CopilotTester {
 
         try {
             const response = await this.copilotBridge.handleCopilotRequest(testRequest);
-            vscode.window.showInformationMessage(`Agent Code Review Test: ${response.success ? 'Success' : 'Failed'}`);
+            console.log(`Agent Code Review Test: ${response.success ? 'Success' : 'Failed'}`);
             console.log('Agent Code Review Response:', response);
         } catch (error) {
-            vscode.window.showErrorMessage(`Agent Code Review Test Failed: ${error}`);
+            console.error(`Agent Code Review Test Failed: ${error}`);
         }
     }
 
@@ -75,13 +75,13 @@ class CopilotTester {
      * Run all agent tests
      */
     async runAllTests(): Promise<void> {
-        vscode.window.showInformationMessage('Running VSCoder Copilot Agent Tests...');
+        console.log('Running VSCoder Copilot Agent Tests...');
         
         await this.testAgentAutonomous();
         await this.testAgentInteractive();
         await this.testAgentCodeReview();
         
-        vscode.window.showInformationMessage('VSCoder Copilot Agent Tests Completed!');
+        console.log('VSCoder Copilot Agent Tests Completed!');
     }
 }
 

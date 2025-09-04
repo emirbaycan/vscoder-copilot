@@ -971,26 +971,21 @@ export class CopilotBridge {
      * Check if a line is user input or echo
      */
     private isUserInputLine(line: string, originalPrompt: string): boolean {
+        const trimmedLine = line.trim();
+        
+        // Simple rule: if it starts with @workspace, it's user input
+        if (trimmedLine.startsWith('@workspace')) {
+            return true;
+        }
+        
         const lowerLine = line.toLowerCase();
         const lowerPrompt = originalPrompt.toLowerCase();
         
-        // Check for dynamic username
-        const username = this.extractUsernameFromLine(line);
-        if (username) {
-            // If we found a username and it's not a known assistant prefix, it's user input
-            const lowerUsername = username.toLowerCase();
-            if (!lowerUsername.includes('github copilot') && 
-                !lowerUsername.includes('copilot') && 
-                !lowerUsername.includes('assistant')) {
-                return true;
-            }
-        }
-        
+        // Check for traditional user markers
         return (
             lowerLine.startsWith('user:') ||
             lowerLine.startsWith('you:') ||
             lowerLine.startsWith('human:') ||
-            lowerLine.includes('@workspace') ||
             lowerLine.includes(lowerPrompt.substring(0, Math.min(20, lowerPrompt.length)))
         );
     }
@@ -1011,11 +1006,26 @@ export class CopilotBridge {
      * Extract username dynamically from a chat line
      */
     private extractUsernameFromLine(line: string): string | null {
-        // Look for pattern "username: message" at the start of the line
-        const match = line.match(/^([^:]+):\s*/);
-        if (match && match[1]) {
-            const username = match[1].trim();
-            // Exclude known assistant prefixes
+        // Handle the format from logs: "Username\nTimestamp" or "Username" followed by timestamp
+        const trimmedLine = line.trim();
+        
+        // Pattern 1: "You\n20:22:36" or "GitHub Copilot\n20:22:01"
+        const timestampPattern = /^([A-Za-z\s]+)\n?\s*\d{1,2}:\d{2}:\d{2}/;
+        const timestampMatch = trimmedLine.match(timestampPattern);
+        if (timestampMatch && timestampMatch[1]) {
+            return timestampMatch[1].trim();
+        }
+        
+        // Pattern 2: Simple username on its own line (check if next part looks like timestamp or content)
+        if (/^(You|GitHub Copilot|Copilot|Assistant|Human|User)$/i.test(trimmedLine)) {
+            return trimmedLine;
+        }
+        
+        // Pattern 3: Traditional "username: message" format
+        const colonMatch = line.match(/^([^:]+):\s*/);
+        if (colonMatch && colonMatch[1]) {
+            const username = colonMatch[1].trim();
+            // Exclude known assistant prefixes from being treated as usernames
             const lowerUsername = username.toLowerCase();
             if (!lowerUsername.includes('github copilot') && 
                 !lowerUsername.includes('copilot') && 
@@ -1023,6 +1033,7 @@ export class CopilotBridge {
                 return username;
             }
         }
+        
         return null;
     }
 
@@ -2165,6 +2176,17 @@ export class CopilotBridge {
                 console.log(`🔧 DEBUG: lastChatContent at start: "${lastChatContent.substring(0, 100)}..." (length: ${lastChatContent.length})`);
                 this.outputChannel.appendLine('🔄 Starting chat history sync...');
                 
+                // Always focus chat first to ensure copyAll works
+                console.log('🎯 Focusing chat before copying content...');
+                try {
+                    await vscode.commands.executeCommand('workbench.panel.chat.view.copilot.focus');
+                    await new Promise(resolve => setTimeout(resolve, 300));
+                    console.log('✅ Chat focused successfully');
+                } catch (focusError) {
+                    console.log(`⚠️ Failed to focus chat: ${focusError}`);
+                    this.outputChannel.appendLine(`⚠️ Failed to focus chat: ${focusError}`);
+                }
+                
                 // Clear clipboard to ensure clean state
                 console.log('📋 Clearing clipboard...');
                 await vscode.env.clipboard.writeText('');
@@ -2279,6 +2301,16 @@ export class CopilotBridge {
         this.outputChannel.appendLine('🔄 Attempting fallback chat synchronization...');
         
         try {
+            // Always focus chat first
+            console.log('🎯 Focusing chat before fallback sync...');
+            try {
+                await vscode.commands.executeCommand('workbench.panel.chat.view.copilot.focus');
+                await new Promise(resolve => setTimeout(resolve, 500));
+                console.log('✅ Chat focused for fallback sync');
+            } catch (focusError) {
+                console.log(`⚠️ Failed to focus chat for fallback: ${focusError}`);
+            }
+            
             // Method 1: Try to get chat session info
             const chatCommands = await vscode.commands.getCommands();
             const relevantChatCommands = chatCommands.filter(cmd => 
@@ -2338,63 +2370,85 @@ export class CopilotBridge {
             const messageBlocks = chatText.split(/\n\s*\n/);
             console.log(`📦 Strategy 1: Found ${messageBlocks.length} blocks by double newlines`);
             
-            // Strategy 2: Split by message markers more intelligently
+            // Strategy 2: Handle real chat format with proper prefixes
             const lines = chatText.split('\n');
             let currentMessage: string[] = [];
             let currentRole = '';
-            let currentStartLine = '';
             
             for (let i = 0; i < lines.length; i++) {
-                const line = lines[i].trim();
+                const line = lines[i];
+                const trimmedLine = line.trim();
                 
-                // Check if this line starts a new message
-                if (this.isMessageStart(line)) {
+                // Check for user message (contains @workspace or starts with username: @workspace)
+                if (trimmedLine.startsWith('@workspace') || 
+                    trimmedLine.includes(': @workspace')) {
+                    
                     // Save previous message if it exists
-                    if (currentMessage.length > 0 && currentRole && currentStartLine) {
-                        const content = this.extractMessageContent(currentStartLine);
-                        const restContent = currentMessage.slice(1).join('\n').trim();
-                        const fullContent = content + (restContent ? '\n' + restContent : '');
-                        
-                        if (fullContent.trim().length > 0) {
+                    if (currentMessage.length > 0) {
+                        const content = currentMessage.join('\n').trim();
+                        if (content.length > 0) {
                             messages.push({
                                 id: `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
                                 timestamp: new Date().toISOString(),
                                 role: currentRole,
-                                content: fullContent.trim(),
-                                rawLine: currentStartLine,
+                                content: content,
                                 rawBlock: currentMessage.join('\n')
                             });
-                            console.log(`✅ Added message: role=${currentRole}, length=${fullContent.length}, preview="${fullContent.substring(0, 100)}..."`);
+                            console.log(`✅ Added message: role=${currentRole}, length=${content.length}, preview="${content.substring(0, 100)}..."`);
                         }
                     }
                     
-                    // Start new message
+                    // Start new USER message
                     currentMessage = [line];
-                    currentRole = this.detectMessageRole(line);
-                    currentStartLine = line;
-                    console.log(`🆕 New message started: role=${currentRole}, line="${line}"`);
-                } else if (currentMessage.length > 0) {
-                    // Continue current message
-                    currentMessage.push(lines[i]); // Use original line with whitespace
+                    currentRole = 'user';
+                    console.log(`🆕 New USER message: "${trimmedLine}"`);
+                }
+                // Check for GitHub Copilot response
+                else if (trimmedLine.startsWith('GitHub Copilot:')) {
+                    // Save previous message if it exists
+                    if (currentMessage.length > 0) {
+                        const content = currentMessage.join('\n').trim();
+                        if (content.length > 0) {
+                            messages.push({
+                                id: `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                                timestamp: new Date().toISOString(),
+                                role: currentRole,
+                                content: content,
+                                rawBlock: currentMessage.join('\n')
+                            });
+                            console.log(`✅ Added message: role=${currentRole}, length=${content.length}, preview="${content.substring(0, 100)}..."`);
+                        }
+                    }
+                    
+                    // Start new ASSISTANT message
+                    currentMessage = [line];
+                    currentRole = 'assistant';
+                    console.log(`🆕 New ASSISTANT message: "${trimmedLine.substring(0, 50)}..."`);
+                }
+                // Continue current message
+                else if (currentMessage.length > 0) {
+                    currentMessage.push(line);
+                }
+                // If we don't have a current message and this is content, assume it's assistant
+                else if (trimmedLine.length > 0) {
+                    currentMessage = [line];
+                    currentRole = 'assistant';
+                    console.log(`🆕 New ASSISTANT message (default): "${trimmedLine.substring(0, 50)}..."`);
                 }
             }
             
-            // Don't forget the last message
-            if (currentMessage.length > 0 && currentRole && currentStartLine) {
-                const content = this.extractMessageContent(currentStartLine);
-                const restContent = currentMessage.slice(1).join('\n').trim();
-                const fullContent = content + (restContent ? '\n' + restContent : '');
-                
-                if (fullContent.trim().length > 0) {
+            // Handle the last message
+            if (currentMessage.length > 0) {
+                const content = currentMessage.join('\n').trim();
+                if (content.length > 0) {
                     messages.push({
                         id: `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
                         timestamp: new Date().toISOString(),
                         role: currentRole,
-                        content: fullContent.trim(),
-                        rawLine: currentStartLine,
+                        content: content,
                         rawBlock: currentMessage.join('\n')
                     });
-                    console.log(`✅ Added final message: role=${currentRole}, length=${fullContent.length}, preview="${fullContent.substring(0, 100)}..."`);
+                    console.log(`✅ Added final message: role=${currentRole}, length=${content.length}, preview="${content.substring(0, 100)}..."`);
                 }
             }
             
@@ -2423,14 +2477,18 @@ export class CopilotBridge {
      * Check if a line starts a new message
      */
     private isMessageStart(line: string): boolean {
+        const trimmedLine = line.trim();
+        // User messages always start with @workspace
+        if (trimmedLine.startsWith('@workspace')) {
+            return true;
+        }
+        
+        // Check for Copilot message indicators
         const lowerLine = line.toLowerCase();
         return (
-            lowerLine.includes('user:') ||
-            lowerLine.includes('human:') ||
-            lowerLine.includes('github copilot:') ||
+            lowerLine.includes('github copilot') ||
             lowerLine.includes('copilot:') ||
             lowerLine.includes('assistant:') ||
-            lowerLine.startsWith('@workspace') ||
             this.isUsernamePrefix(line)
         );
     }
@@ -2439,38 +2497,37 @@ export class CopilotBridge {
      * Detect the role of a message (user or assistant)
      */
     private detectMessageRole(line: string): string {
-        const lowerLine = line.toLowerCase();
+        const trimmedLine = line.trim();
         
-        // Check for dynamic username first
-        const username = this.extractUsernameFromLine(line);
-        if (username) {
-            const lowerUsername = username.toLowerCase();
-            // If it's not an assistant prefix, it's a user
-            if (!lowerUsername.includes('github copilot') && 
-                !lowerUsername.includes('copilot') && 
-                !lowerUsername.includes('assistant')) {
-                return 'user';
-            }
-        }
-        
-        if (lowerLine.includes('user:') || 
-            lowerLine.includes('human:') || 
-            lowerLine.startsWith('@workspace')) {
+        // STRICT RULE: Only @workspace lines are user messages
+        if (trimmedLine.startsWith('@workspace')) {
             return 'user';
-        } else if (lowerLine.includes('github copilot:') || 
-                   lowerLine.includes('copilot:') || 
-                   lowerLine.includes('assistant:')) {
-            return 'assistant';
         }
         
-        return 'unknown';
+        // Check if this is a header line that might lead to @workspace content
+        // Like "You" or "User" followed by timestamp, then @workspace
+        const lowerLine = line.toLowerCase();
+        if (lowerLine === 'you' || lowerLine === 'user' || lowerLine === 'human') {
+            // This might be a user header, but we'll verify later with lookahead
+            return 'user';
+        }
+        
+        // Everything else is assistant by default
+        return 'assistant';
     }
 
     /**
      * Extract content from a message line, removing role prefixes
      */
     private extractMessageContent(line: string): string {
-        // First try to extract based on dynamic username
+        const trimmedLine = line.trim();
+        
+        // If it starts with @workspace, return the full line as-is (user message)
+        if (trimmedLine.startsWith('@workspace')) {
+            return trimmedLine;
+        }
+        
+        // For Copilot messages, try to extract based on dynamic username
         const username = this.extractUsernameFromLine(line);
         if (username) {
             const prefixToRemove = username + ':';
@@ -2478,11 +2535,16 @@ export class CopilotBridge {
             if (index !== -1) {
                 return line.substring(index + prefixToRemove.length).trim();
             }
+            
+            // If username doesn't have colon, check if it's on its own line
+            if (line.trim() === username) {
+                return ''; // This line is just the username, content comes after
+            }
         }
         
-        // Fallback to static prefixes
+        // Fallback to static prefixes for Copilot messages
         const lowerLine = line.toLowerCase();
-        const staticPrefixes = ['user:', 'human:', 'github copilot:', 'copilot:', 'assistant:'];
+        const staticPrefixes = ['github copilot:', 'copilot:', 'assistant:'];
         
         for (const prefix of staticPrefixes) {
             if (lowerLine.includes(prefix)) {
@@ -2491,6 +2553,7 @@ export class CopilotBridge {
             }
         }
         
+        // Return the line as-is if no prefix found
         return line.trim();
     }
 }

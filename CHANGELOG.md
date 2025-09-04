@@ -2,6 +2,46 @@
 
 All notable changes to the "VSCoder Copilot" extension will be documented in this file.
 
+## [1.2.0] - 2025-09-05
+
+### 🔄 Mobile Navigation Fix & Enhanced WebSocket Reliability
+
+#### 🎯 Mobile App Navigation Issue Resolution
+- **Force Reconnect Method**: Added `forceReconnect()` method to VSCoderService that mimics page refresh behavior
+- **WebSocket State Reset**: Complete clearing of WebSocket listeners, message tracking, and connection state
+- **Navigation Reliability**: Fixed issue where chat page wouldn't load messages/files after adding workspace until manual refresh
+- **Page Refresh Simulation**: `forceReconnect()` provides the same reliability as manual page refresh but programmatically
+
+#### 🔧 WebSocket Event Handling Enhancement
+- **Missing Event Handlers**: Added previously missing `addEventListener`, `removeEventListener`, and `notifyListeners` methods
+- **Complete Event System**: VSCoderService now has full event handling capabilities for WebSocket communication
+- **Message Listener Support**: Enhanced support for multiple WebSocket message listeners with proper cleanup
+- **Event-Driven Architecture**: Improved event-driven communication between mobile app and VS Code extension
+
+#### 📱 Mobile App User Experience
+- **Refresh Button Enhancement**: Mobile app refresh button now uses `forceReconnect()` for reliable page refresh-like behavior
+- **Seamless Navigation**: Users can now navigate from profile page to chat page without manual refresh requirements
+- **Automatic Recovery**: Built-in recovery mechanism for WebSocket connection issues during navigation
+- **One-Click Fix**: Simple refresh button tap now resolves navigation loading issues instantly
+
+#### 🛠️ Technical Implementation
+- **State Cleanup**: Complete WebSocket state cleanup including processed message IDs, listeners, and retry flags
+- **Connection Re-establishment**: Smart reconnection logic with proper timing and connection validation
+- **Memory Management**: Proper cleanup prevents memory leaks from accumulated WebSocket state
+- **Connection Verification**: Built-in success/failure detection for reconnection attempts
+
+#### ✨ User Workflow Improvement
+- **Elimination of Manual Refresh**: No more need for manual page refresh after workspace profile addition
+- **Reliable Chat Loading**: Chat page consistently loads messages and file trees after navigation
+- **Improved User Experience**: Seamless workflow from profile management to active development
+- **Cross-Network Stability**: Enhanced connection reliability across different network conditions
+
+#### 🔍 Problem Resolution Details
+- **Root Cause**: WebSocket event listeners weren't properly re-established during mobile app navigation
+- **Solution**: Programmatic simulation of page refresh behavior through complete state reset
+- **Implementation**: Added comprehensive `forceReconnect()` method with proper timing and validation
+- **Result**: Mobile app navigation now works reliably without manual intervention
+
 ## [1.1.0] - 2025-08-27
 
 ### 🚫 Advanced Duplicate Message Prevention & Session Management

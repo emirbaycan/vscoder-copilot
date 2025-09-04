@@ -128,10 +128,10 @@ Advanced commands:
 - Manual sync button for instant updates
 
 ### Premium Features (Mobile App)
-- **🆓 Free**: 50 AI messages per day, full file access
-- **💎 Premium Monthly** ($9.99): Unlimited AI conversations
-- **🏆 Premium Annual** ($99.99): All features + 17% savings
-- **🎁 7-day Free Trial**: Available for all new premium subscriptions
+- **� 1-Day Free Trial**: Automatic trial subscription created on first authentication
+- **💎 Premium Monthly** ($9.99): Unlimited AI conversations and full feature access
+- **🏆 Premium Annual** ($99.99): All features with 17% savings
+- **🔐 Subscription Authentication**: Database-backed subscription verification integrated with VS Code extension
 
 ## ⚙️ Requirements
 
@@ -181,9 +181,9 @@ VSCoder works out of the box, but you can customize these settings:
 
 **vscoder.websiteUrl**: The main website URL where the React application is hosted. Used for browser-based interactions and provides API proxy functionality.
 
-**vscoder.deviceToken**: Authentication token for the discovery service. For production use, generate a unique token through the discovery service.
+**vscoder.deviceToken**: Authentication token automatically generated and managed by the subscription-based Discovery API. Tokens are database-backed and persist across server restarts for reliable authentication.
 
-**vscoder.pairingCode**: Auto-generated 6-digit codes that expire every 10 minutes for security. Regenerated automatically or on demand.
+**vscoder.pairingCode**: Auto-generated 6-digit codes that expire every 10 minutes for security. Used for device pairing and subscription creation during authentication flow.
 
 **vscoder.api.url**: Discovery API server URL for mobile app communication via message broker (same as discoveryApiUrl for consistency).
 
@@ -807,7 +807,11 @@ The extension uses a **WebSocket-first approach** with Discovery API integration
 
 ### Security Features
 
-- **Bearer Token Authentication**: 64-character hex tokens with 24-hour expiry
+- **Database-Backed Authentication**: Persistent token validation using subscription-based architecture
+- **Bearer Token Authentication**: 64-character hex tokens with automatic trial subscription creation
+- **Subscription-Based Access Control**: 1-day trial period with automatic premium upgrade options
+- **WebSocket Authentication**: Secure token-based WebSocket connections with real-time validation
+- **Cross-Network Security**: End-to-end encrypted communication through Discovery API
 - **Workspace Isolation**: File access restricted to current workspace only
 - **Rate Limiting**: Protection against abuse with configurable limits
 - **HTTPS/WSS**: Encrypted communication between all components
@@ -823,12 +827,15 @@ The extension uses a **WebSocket-first approach** with Discovery API integration
 - ✅ **Message Deduplication**: Multi-layer duplicate prevention with content hashing and sequence tracking
 - ✅ **Progress Callback System**: Real-time progress updates from CopilotBridge routed to mobile apps
 - ✅ **Auto-Reconnection Logic**: Smart reconnection with exponential backoff for network stability
+- ✅ **Force Reconnect Capability**: Page-refresh-like reconnection to resolve mobile navigation issues
 
 **🔐 Enhanced Authentication & Security**: 
-- Device registration with proper authentication flow through Discovery API
-- Bearer token management with automatic renewal and error handling
-- Secure WebSocket connections with proper credential management
-- Enhanced rate limiting and abuse prevention mechanisms
+- Database-backed device authentication with persistent token storage
+- Automatic trial subscription creation (1-day trial, then premium upgrade)
+- Subscription-based access control aligned with business model
+- Bearer token management with database validation and persistence
+- Secure WebSocket connections with subscription-verified credentials
+- Enhanced rate limiting and subscription-based usage tracking
 
 **⚡ Performance & Reliability Improvements**:
 - Enhanced WebSocket-first communication with Discovery API
@@ -838,6 +845,7 @@ The extension uses a **WebSocket-first approach** with Discovery API integration
 - Reduced redundant token generation
 - Improved error handling and diagnostics
 - Enhanced connection stability and reconnection logic
+- Force reconnect capability for mobile app navigation issues
 
 **🛠️ Developer Experience**:
 - Enhanced troubleshooting commands and diagnostics
@@ -848,6 +856,47 @@ The extension uses a **WebSocket-first approach** with Discovery API integration
 - Session management with automatic cleanup
 - Detailed diagnostic information and health checks
 - Production-ready marketplace packaging (v1.2.0+)
+
+## Technical Architecture
+
+### Database-Backed Authentication System
+
+The extension uses a robust database-backed authentication system that provides persistent token management and subscription-based access control:
+
+#### Authentication Flow
+1. **Device Registration**: Unique device tokens generated and stored in database
+2. **Subscription Validation**: Real-time verification against subscription records
+3. **Token Persistence**: Authentication state survives server restarts
+4. **Trial Management**: Automatic 1-day trial creation for new devices
+
+#### Database Schema
+- **Device Table**: device_token, user_info, subscription links
+- **Subscription Table**: trial_ends_at, expires_at, product_id, platform_receipt_id
+- **Feature Access**: Real-time subscription status checking
+
+#### WebSocket Security
+- Bearer token authentication for all WebSocket connections
+- Automatic credential refresh and reconnection
+- Secure discovery service integration
+- Real-time subscription status validation
+
+### API Integration Points
+
+The extension integrates with the VSCoder API through these endpoints:
+
+- `POST /api/v1/auth/token` - Device authentication
+- `GET /api/v1/auth/status` - Subscription verification  
+- `WebSocket /api/v1/chat/ws` - Real-time communication
+- `Discovery Service` - Automatic server detection
+
+### Subscription-Based Access Control
+
+All extension features require active subscription validation:
+
+- **Trial Period**: 1-day automatic trial for new users
+- **Premium Features**: Monthly ($9.99) or Annual ($99.99) subscriptions
+- **Real-Time Validation**: Continuous subscription status checking
+- **Graceful Degradation**: Clear messaging when subscription expires
 
 ## Supported AI Models
 
@@ -1010,6 +1059,18 @@ This tool will:
 2. **Fresh code**: Run `VSCoder: Generate New Pairing Code`
 3. **Enter new code**: Use the new 6-digit code in mobile app
 4. **Wait**: Connection may take 30-60 seconds
+
+#### 📱 "Mobile App Navigation Issues"
+
+**What you see**: After adding workspace with pairing code, navigating to chat page doesn't load messages/files until manual page refresh
+**What's happening**: WebSocket event listeners weren't properly re-established during navigation
+**Quick fix**:
+1. **Use Refresh Button**: Tap the refresh button in the mobile app after navigation
+2. **Automatic Solution**: The refresh button now mimics page refresh behavior
+3. **Force Reconnect**: Mobile app uses `forceReconnect()` to reset WebSocket state completely
+4. **Works Like Magic**: Should now work exactly like manual page refresh
+
+**Technical Details**: The `forceReconnect()` method clears all WebSocket state, listeners, and message tracking, then re-establishes connection from scratch - exactly like a page refresh.
 
 #### ⏰ "Pairing Code Expired"
 
@@ -1380,7 +1441,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 ### General Questions
 
 **Q: Do I need to pay for anything?**
-A: The VS Code extension is completely free! The mobile app has a free tier (50 AI messages/day) and optional premium subscriptions for unlimited usage.
+A: The VS Code extension is completely free! The mobile app offers a 1-day free trial, then requires a premium subscription (Monthly $9.99 or Annual $99.99) for unlimited AI features.
 
 **Q: Does this work with my existing GitHub Copilot subscription?**
 A: Yes! VSCoder uses your existing GitHub Copilot subscription. You just need Copilot installed and authenticated in VS Code.

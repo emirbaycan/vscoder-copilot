@@ -50,18 +50,14 @@ export class DiscoveryService {
         this.config = config;
         this.pairingCode = config.pairingCode;
         
-        // Don't trust device tokens from config - they might be invalid/expired
-        // Only use them if they look like proper tokens (longer than 20 chars)
-        if (config.deviceToken && config.deviceToken.length > 20) {
-            this.deviceToken = config.deviceToken;
-            this.isAuthenticated = true;
-            console.log('🔑 Loaded device token from config:', `${config.deviceToken.substring(0, 20)}... (length: ${config.deviceToken.length})`);
-        } else {
-            this.deviceToken = undefined;
-            this.isAuthenticated = false;
-            if (config.deviceToken) {
-                console.log('⚠️ Ignoring invalid device token from config:', `${config.deviceToken} (length: ${config.deviceToken.length})`);
-            }
+        // Don't trust device tokens from config - they might be expired
+        // Always start unauthenticated and require fresh authentication
+        this.deviceToken = undefined;
+        this.isAuthenticated = false;
+        
+        if (config.deviceToken) {
+            console.log('⚠️ Ignoring stored device token from config - will authenticate fresh to avoid 401 errors');
+            console.log('🔑 Previous token preview:', `${config.deviceToken.substring(0, 20)}... (length: ${config.deviceToken.length})`);
         }
     }
 
@@ -109,18 +105,6 @@ export class DiscoveryService {
             console.error('❌ VS Code extension authentication failed:', error);
             this.deviceToken = undefined;
             this.isAuthenticated = false;
-            
-            vscode.window.showErrorMessage(
-                `Failed to authenticate VS Code extension: ${error.message}`,
-                'Retry',
-                'Check Settings'
-            ).then(selection => {
-                if (selection === 'Retry') {
-                    setTimeout(() => this.authenticateDevice(), 3000);
-                } else if (selection === 'Check Settings') {
-                    vscode.commands.executeCommand('workbench.action.openSettings', 'vscoder.discoveryApiUrl');
-                }
-            });
 
             return false;
         }
@@ -353,27 +337,9 @@ export class DiscoveryService {
             await this.makeApiRequest('/api/v1/register', 'POST', registrationData);
             this.isRegistered = true;
             
-            // Show success message with pairing code
-            vscode.window.showInformationMessage(
-                `📱 VSCoder ready for remote access! Pairing code: ${this.pairingCode}\n` +
-                `Share this code with your mobile app to connect securely from anywhere via Discovery API.`,
-                'Copy Code',
-                'Show Instructions'
-            ).then(selection => {
-                if (selection === 'Copy Code') {
-                    vscode.env.clipboard.writeText(this.pairingCode!);
-                    vscode.window.showInformationMessage('✅ Pairing code copied to clipboard!');
-                } else if (selection === 'Show Instructions') {
-                    vscode.window.showInformationMessage(
-                        'Mobile App Remote Connection Instructions:\n' +
-                        '1. Open VSCoder mobile app\n' +
-                        '2. Go to Pairing/Connection section\n' +
-                        '3. Enter this 6-digit code\n' +
-                        '4. App will connect remotely through Discovery API\n' +
-                        '5. No need to be on the same network!'
-                    );
-                }
-            });
+            // Log success message (pairing code is already shown in status bar)
+            console.log(`📱 VSCoder ready for remote access! Pairing code: ${this.pairingCode}`);
+            console.log('Share this code with your mobile app to connect securely from anywhere via Discovery API.');
 
             // Start heartbeat
             this.startHeartbeat(port);
@@ -405,28 +371,7 @@ export class DiscoveryService {
                 actions = ['Reauthenticate', 'Check Settings'];
             }
             
-            vscode.window.showErrorMessage(errorMessage, ...actions).then(selection => {
-                if (selection === 'Retry') {
-                    // Retry registration after a delay
-                    setTimeout(() => this.register(port), 5000);
-                } else if (selection === 'Reauthenticate') {
-                    this.authenticateDevice().then(success => {
-                        if (success) {
-                            this.register(port);
-                        }
-                    });
-                } else if (selection === 'Check Settings' || selection === 'Check URL') {
-                    vscode.commands.executeCommand('workbench.action.openSettings', 'vscoder.discoveryApiUrl');
-                } else if (selection === 'Learn More') {
-                    vscode.window.showInformationMessage(
-                        'Rate Limiting Information:\n' +
-                        '• Discovery service limits registration requests\n' +
-                        '• This prevents abuse and ensures fair usage\n' +
-                        '• Your registration will be retried automatically\n' +
-                        '• Mobile apps can still connect once registered'
-                    );
-                }
-            });
+            console.error('❌ Discovery service registration error:', errorMessage);
             
             throw error;
         }
@@ -569,12 +514,21 @@ export class DiscoveryService {
         const config = vscode.workspace.getConfiguration('vscoder');
         
         const apiUrl = config.get<string>('api.url', 'https://api.vscodercopilot.com.tr');
-        const deviceToken = config.get<string>('deviceToken'); // Optional, may be undefined
+        const deviceToken = config.get<string>('deviceToken'); // Don't use - force fresh auth
         const pairingCode = config.get<string>('pairingCode');
+
+        // Clear any stored device token to force fresh authentication and avoid 401 errors
+        if (deviceToken) {
+            console.log('🧹 Clearing stored device token from config to force fresh authentication');
+            config.update('deviceToken', undefined, vscode.ConfigurationTarget.Global).then(
+                () => console.log('✅ Old device token cleared from config'),
+                (err: any) => console.warn('Warning: Failed to clear old device token from config:', err)
+            );
+        }
 
         return new DiscoveryService({
             apiUrl,
-            deviceToken,
+            deviceToken: undefined, // Always start fresh to avoid expired tokens
             pairingCode
         });
     }

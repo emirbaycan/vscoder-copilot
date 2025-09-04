@@ -105,7 +105,7 @@ export class ApiClient {
         }
 
         // Check if authenticated with Discovery Service
-        if (!this.discoveryService?.isAuthenticated()) {
+        if (!this.discoveryService?.isDeviceAuthenticated()) {
             console.error('❌ Cannot send message: Not authenticated with Discovery API');
             return false;
         }

@@ -159,16 +159,11 @@ export class VSCoderServer {
      */
     private async setupApiCommunication(): Promise<void> {
         try {
-            // Ensure device is authenticated before setting up WebSocket
+            // Authentication should already be complete when this is called
+            // Just verify we have valid credentials
             if (!this.discoveryService.isDeviceAuthenticated()) {
-                console.log('🔐 Device not authenticated, authenticating first...');
-                try {
-                    await this.discoveryService.authenticate();
-                    console.log('✅ Device authentication successful for WebSocket');
-                } catch (error) {
-                    console.warn('⚠️ Failed to authenticate device for WebSocket communication:', error);
-                    return;
-                }
+                console.error('❌ Device not authenticated - cannot setup WebSocket communication');
+                return;
             }
 
             // Test API connection first
@@ -185,20 +180,22 @@ export class VSCoderServer {
                 return;
             }
 
-            // Get device token from discovery service (not apiClient)
+            // Get device token from discovery service (should be fresh after authentication)
             const deviceToken = this.discoveryService.getDeviceToken();
             if (!deviceToken) {
                 console.warn('⚠️ No device token available for WebSocket communication');
                 return;
             }
 
-            console.log('🔑 Setting up WebSocket with credentials (will connect and listen for commands)...', {
+            console.log('🔑 Setting up WebSocket with fresh credentials after authentication...', {
                 pairingCode: pairingCode,
                 hasToken: !!deviceToken,
+                tokenLength: deviceToken.length,
+                tokenPreview: deviceToken.substring(0, 8) + '...',
                 isAuthenticated: this.discoveryService.isDeviceAuthenticated()
             });
 
-            // Set credentials for WebSocket client
+            // Set credentials for WebSocket client with fresh token
             this.discoveryWebSocket.setCredentials(pairingCode, deviceToken);
             
             // Set message handler for incoming commands
@@ -324,6 +321,29 @@ export class VSCoderServer {
     }
 
     /**
+     * Check if the extension is properly paired with a mobile device
+     * This prevents unpaired extensions from making API requests
+     */
+    private isPaired(): boolean {
+        return this.discoveryService.isDeviceAuthenticated() && !!this.discoveryService.getPairingCode();
+    }
+
+    /**
+     * Check if a command requires pairing to prevent API abuse
+     * Only basic status commands are allowed without pairing
+     */
+    private requiresPairing(command: string): boolean {
+        // Commands that don't require pairing (basic status/info only)
+        const publicCommands = new Set([
+            'ping',
+            'get_workspace_info',
+            'get_settings'
+        ]);
+        
+        return !publicCommands.has(command);
+    }
+
+    /**
      * Handle command from mobile app
      */
     private async handleMobileCommand(message: Message): Promise<any> {
@@ -333,6 +353,30 @@ export class VSCoderServer {
         console.log('🎯 Executing command from mobile app:', command);
         console.log('🔍 DEBUG: Full message data received:', JSON.stringify(data, null, 2));
         console.log('🔍 DEBUG: messageId in data:', data.messageId);
+
+        // 🔒 PAIRING PROTECTION: Block all commands except basic info until device is paired
+        // This prevents unpaired extensions from overwhelming the API server
+        const pairingRequiredCommands = this.requiresPairing(command);
+        if (pairingRequiredCommands && !this.isPaired()) {
+            const pairingError = {
+                success: false,
+                command: command,
+                error: 'Device pairing required. This VS Code instance must be paired with a mobile device before making API requests.',
+                errorCode: 'PAIRING_REQUIRED',
+                pairingInstructions: 'Open the VSCoder mobile app and scan the pairing code to connect this VS Code instance.',
+                pairingCode: this.discoveryService.getPairingCode(),
+                ...(data.messageId && { messageId: data.messageId })
+            };
+            
+            console.log('🔒 Blocked unpaired command:', command);
+            console.log('🔒 Pairing status:', {
+                isPaired: this.isPaired(),
+                isAuthenticated: this.discoveryService.isDeviceAuthenticated(),
+                hasPairingCode: !!this.discoveryService.getPairingCode()
+            });
+            
+            return pairingError;
+        }
 
         try {
             let result;
@@ -603,6 +647,26 @@ export class VSCoderServer {
      * Handle Copilot request from mobile app
      */
     private async handleMobileCopilotRequest(message: Message): Promise<any> {
+        // 🔒 PAIRING PROTECTION: Copilot requests require pairing to prevent API abuse
+        if (!this.isPaired()) {
+            const pairingError = {
+                success: false,
+                error: 'Device pairing required for Copilot requests. This VS Code instance must be paired with a mobile device first.',
+                errorCode: 'PAIRING_REQUIRED',
+                pairingInstructions: 'Open the VSCoder mobile app and scan the pairing code to connect this VS Code instance.',
+                pairingCode: this.discoveryService.getPairingCode()
+            };
+            
+            console.log('🔒 Blocked unpaired Copilot request');
+            
+            // For backward compatibility with API-based communication
+            if (message.id) {
+                await this.apiClient.sendResponse(pairingError, message.id);
+            }
+            
+            return pairingError;
+        }
+
         const copilotRequest = message.data as CopilotRequest;
         
         console.log('🤖 Processing Copilot request from mobile app');
@@ -642,6 +706,26 @@ export class VSCoderServer {
      * Handle file request from mobile app
      */
     private async handleMobileFileRequest(message: Message): Promise<any> {
+        // 🔒 PAIRING PROTECTION: File operations require pairing to prevent API abuse
+        if (!this.isPaired()) {
+            const pairingError = {
+                success: false,
+                error: 'Device pairing required for file operations. This VS Code instance must be paired with a mobile device first.',
+                errorCode: 'PAIRING_REQUIRED',
+                pairingInstructions: 'Open the VSCoder mobile app and scan the pairing code to connect this VS Code instance.',
+                pairingCode: this.discoveryService.getPairingCode()
+            };
+            
+            console.log('🔒 Blocked unpaired file request');
+            
+            // For backward compatibility with API-based communication
+            if (message.id) {
+                await this.apiClient.sendResponse(pairingError, message.id);
+            }
+            
+            return pairingError;
+        }
+
         const { action, path, content } = message.data || {};
 
         try {

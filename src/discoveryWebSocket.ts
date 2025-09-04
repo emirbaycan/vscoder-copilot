@@ -355,14 +355,12 @@ export function createWebSocketClient(): DiscoveryWebSocketClient {
         apiUrl,
         () => {
             console.log('✅ WebSocket connected to Discovery API');
-            vscode.window.showInformationMessage('🔌 Connected to Discovery API via WebSocket');
         },
         () => {
             console.log('🔌 WebSocket disconnected from Discovery API');
         },
         (error: Error) => {
             console.error('❌ WebSocket error:', error);
-            vscode.window.showErrorMessage(`WebSocket error: ${error.message}`);
         }
     );
 }

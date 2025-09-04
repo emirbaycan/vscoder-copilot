@@ -57,88 +57,13 @@
         "category": "VSCoder"
       },
       {
-        "command": "vscoder.showStatus",
-        "title": "Show Status",
-        "category": "VSCoder"
-      },
-      {
-        "command": "vscoder.testCopilot",
-        "title": "Test Copilot Bridge",
-        "category": "VSCoder"
-      },
-      {
-        "command": "vscoder.runDiagnostics",
-        "title": "Run Diagnostics",
-        "category": "VSCoder"
-      },
-      {
-        "command": "vscoder.copilotDiagnostics",
-        "title": "Copilot Diagnostics",
-        "category": "VSCoder"
-      },
-      {
-        "command": "vscoder.quickTest",
-        "title": "Quick Test",
-        "category": "VSCoder"
-      },
-      {
-        "command": "vscoder.autoStart",
-        "title": "Auto-Start Setup",
-        "category": "VSCoder"
-      },
-      {
-        "command": "vscoder.showAgentPrompt",
-        "title": "Show Agent Prompt",
-        "category": "VSCoder"
-      },
-      {
         "command": "vscoder.showPairingCode",
         "title": "Show Pairing Code",
         "category": "VSCoder"
       },
       {
-        "command": "vscoder.generatePairingCode",
-        "title": "Generate New Pairing Code",
-        "category": "VSCoder"
-      },
-      {
-        "command": "vscoder.testDiscoveryService",
-        "title": "Test Discovery Service",
-        "category": "VSCoder"
-      },
-      {
-        "command": "vscoder.runPendingCommands",
-        "title": "Run Pending Commands",
-        "category": "VSCoder"
-      },
-      {
-        "command": "vscoder.continueIteration",
-        "title": "Continue Iteration",
-        "category": "VSCoder"
-      },
-      {
-        "command": "vscoder.autoExecute",
-        "title": "Auto Execute All Actions",
-        "category": "VSCoder"
-      },
-      {
         "command": "vscoder.troubleshootMobile",
         "title": "Troubleshoot Mobile App Connection",
-        "category": "VSCoder"
-      },
-      {
-        "command": "vscoder.apiStatus",
-        "title": "Check API Communication Status",
-        "category": "VSCoder"
-      },
-      {
-        "command": "vscoder.testApiConnection",
-        "title": "Test API Connection",
-        "category": "VSCoder"
-      },
-      {
-        "command": "vscoder.sendTestMessage",
-        "title": "Send Test Message to Mobile App",
         "category": "VSCoder"
       }
     ],
@@ -150,10 +75,6 @@
         },
         {
           "command": "vscoder.stopServer",
-          "when": "true"
-        },
-        {
-          "command": "vscoder.showStatus",
           "when": "true"
         },
         {
