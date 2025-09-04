@@ -1,17 +1,14 @@
 # VS Code Extension ignore file
 .vscode/**
 .vscode-test/**
-out/test/**
 src/**
-**/*.map
+out/**
+node_modules/**
 .gitignore
 tsconfig.json
 .eslintrc.json
 **/*.ts
-# Include production dependencies (express, ws)
-node_modules/**/@types/**
-node_modules/**/typescript/**
-node_modules/**/tslib/**
+**/*.map
 *.vsix
 .nyc_output
 coverage
@@ -28,6 +25,14 @@ coverage
 # Development files
 .vscode-test-web/**
 webpack.config.js
+.git/**
+.github/**
+README.md
+CHANGELOG.md
+
+# Keep only the bundled extension
+!dist/extension.js
+!dist/extension.js.map
 .eslintrc.js
 
 # Documentation that's not needed in package
