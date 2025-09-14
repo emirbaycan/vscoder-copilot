@@ -175,8 +175,12 @@ export function activate(context: vscode.ExtensionContext) {
             const config = vscode.workspace.getConfiguration('vscoder');
             const autoStart = config.get<boolean>('autoStart', true);
             
+            console.log('🔧 Auto-start configuration:', autoStart);
+            
             if (autoStart) {
+                console.log('🚀 Attempting to start server...');
                 await startServer();
+                console.log('🚀 Server start attempt completed');
             } else {
                 console.log('ℹ️ Auto-start disabled in configuration');
             }

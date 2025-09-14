@@ -74,6 +74,8 @@ Transform your smartphone into an intelligent coding companion! VSCoder brings G
 
 ### Step 4: Connect Mobile App
 - **Download VSCoder mobile app** (Android/iOS)
+- **Google Play Store**: Search "VSCoder Copilot" or use package `com.emirbaycan.vscodercopilot`
+- **App Store**: Search "VSCoder Copilot" (iOS version)
 - **Open app** → **Settings** → **Profiles** → **"Pair with VS Code"**
 - **Enter the 6-digit code** from step 3
 - **Connection established** automatically - works across any network!
@@ -127,11 +129,12 @@ Advanced commands:
 - Chat conversations sync every 5 seconds
 - Manual sync button for instant updates
 
-### Premium Features (Mobile App)
-- **� 1-Day Free Trial**: Automatic trial subscription created on first authentication
+### Premium Features (Mobile App v1.0.1+)
+- **🎁 1-Day Free Trial**: Automatic trial subscription created on first authentication (updated from 7-day trial)
 - **💎 Premium Monthly** ($9.99): Unlimited AI conversations and full feature access
-- **🏆 Premium Annual** ($99.99): All features with 17% savings
+- **🏆 Premium Annual** ($99.99): All features with 17% savings  
 - **🔐 Subscription Authentication**: Database-backed subscription verification integrated with VS Code extension
+- **🏪 Google Play Store**: Live on Google Play Store with active subscription processing
 
 ## ⚙️ Requirements
 
@@ -147,7 +150,8 @@ Advanced commands:
 - **Supported Models**: GPT-4o, Claude 3.5 Sonnet, and other available models
 
 ### Mobile Device
-- **VSCoder Mobile App**: Download from app store (Android/iOS)
+- **VSCoder Mobile App**: Download from Google Play Store (Android) or App Store (iOS) - VSCoder Copilot v1.0.1+ live on Google Play
+- **App Package**: `com.emirbaycan.vscodercopilot` (Android package identifier)
 - **Internet Connection**: WiFi or mobile data for device pairing
 - **Operating System**: Android 8.0+ or iOS 12.0+
 
@@ -240,7 +244,7 @@ VSCODER_WEBSOCKET_URL=wss://api.vscodercopilot.com.tr/ws
 3. **Verify Installation**: Run "VSCoder: VSCoder Status" to check extension health
 4. **Start Server**: Use "VSCoder: Start VSCoder Server" command to begin
 
-> **✅ Production Ready**: Version 1.2.0+ includes all dependencies and is fully marketplace compatible.
+> **✅ Production Ready**: Version 1.2.2+ includes all dependencies and is fully marketplace compatible.
 
 ## AI Integration Requirements
 
@@ -819,7 +823,45 @@ The extension uses a **WebSocket-first approach** with Discovery API integration
 
 ## 🔧 Recent Updates & Improvements
 
-### Version 1.2.0+ (Current)
+### Version 1.2.3 (Latest - September 2025)
+
+**🛠️ Stability & Reliability Enhancements**: Major improvements to extension stability and user experience
+- ✅ **GitHub Copilot Extension Reload**: Added `reloadCopilot()` functionality to fix memory issues and extension crashes
+- ✅ **Mobile App Button Integration**: Connected mobile app reload button to VS Code extension reload functionality
+- ✅ **New Chat Session Fix**: Resolved broken new chat button that was causing WebSocket connection issues
+- ✅ **Production Logging Cleanup**: Removed verbose console logging for better production performance
+- ✅ **Enhanced Error Handling**: Improved error handling and recovery mechanisms for extension operations
+- ✅ **Version Synchronization**: Updated mobile app version to 1.0.3 across all configuration files
+
+**🔄 Code Quality & Performance**:
+- Better function naming and code organization for improved maintainability
+- Enhanced state management without unnecessary WebSocket resets
+- Optimized memory usage and reduced logging overhead
+- Improved connection stability and graceful recovery mechanisms
+
+### Version 1.2.2 (Previous)
+
+**🚀 Mobile App Integration Enhancements**: Optimized integration with VSCoder Copilot mobile app v1.0.1
+- ✅ **Enhanced Mobile Pairing**: Improved reliability for 6-digit pairing code generation and validation
+- ✅ **Subscription Synchronization**: Better synchronization with mobile app subscription states (1-day trial updates)
+- ✅ **Connection Stability**: Enhanced WebSocket connection stability for mobile app communication
+- ✅ **Error Recovery**: Improved error handling for mobile app connection issues and automatic reconnection
+- ✅ **Performance Optimization**: Reduced memory usage and improved response times for mobile interactions
+- ✅ **Production Readiness**: Optimizations for live Google Play Store mobile app deployment
+
+**🔐 Enhanced Security & Authentication**:
+- Updated authentication flow for compatibility with mobile app v1.0.1 subscription model
+- Enhanced token validation for better mobile app authentication experience
+- Improved security measures for cross-network device pairing
+- Better handling of subscription trial periods and premium feature access
+
+**🛠️ Developer Experience Improvements**:
+- Enhanced diagnostic commands for mobile app troubleshooting
+- Improved status indicators for mobile app connection states
+- Better error messages and guidance for mobile pairing issues
+- Enhanced logging and debugging capabilities for mobile integration
+
+### Version 1.2.0-1.2.1 (Previous)
 
 **🏗️ Enhanced WebSocket Architecture**: Complete WebSocket-first communication with Discovery API
 - ✅ **Real-time Message Broker**: WebSocket connection to Discovery API for instant command/response flow
@@ -855,7 +897,7 @@ The extension uses a **WebSocket-first approach** with Discovery API integration
 - Message pool system for debugging and monitoring
 - Session management with automatic cleanup
 - Detailed diagnostic information and health checks
-- Production-ready marketplace packaging (v1.2.0+)
+- Production-ready marketplace packaging (v1.2.2+)
 
 ## Technical Architecture
 
@@ -1238,7 +1280,7 @@ For enterprise deployments, configure a custom discovery service:
 
 **Extension is production-ready** with marketplace compatibility:
 
-- ✅ **All Dependencies Included**: Express, WebSocket, and other libraries packaged (v1.2.0+)
+- ✅ **All Dependencies Included**: Express, WebSocket, and other libraries packaged (v1.2.2+)
 - ✅ **Modern VS Code API**: Compatible with VS Code ^1.74.0+
 - ✅ **Proper Activation**: Extension activates automatically on workspace open
 - ✅ **Error Handling**: Comprehensive diagnostics and recovery mechanisms
@@ -1360,20 +1402,21 @@ curl -X POST https://api.vscodercopilot.com.tr/api/v1/auth/token \
 
 ## Next Steps
 
-This extension is designed to work with a **React Native mobile app** that provides:
+This extension works with the **VSCoder Copilot mobile app v1.0.1** which is now **live on Google Play Store**:
 
-- 📱 **Native Mobile UI** for file browsing and code editing
-- 💬 **Chat Interface** for natural language programming  
-- 🔄 **Real-Time Sync** with VS Code workspace
-- 🤖 **AI-Powered Development** with context-aware code generation
-- 🔗 **Automatic Pairing** using 6-digit codes for seamless cross-network device discovery
-- 📡 **Cloud Discovery Service** for connecting devices across different networks and locations
+- 📱 **Download from Google Play**: Search "VSCoder Copilot" on Google Play Store or use package identifier `com.emirbaycan.vscodercopilot`
+- 💬 **Complete Chat Interface** for natural language programming with GitHub Copilot
+- 🔄 **Real-Time Sync** with VS Code workspace and automatic chat synchronization
+- 🤖 **AI-Powered Development** with context-aware code generation and file management
+- 🔗 **6-Digit Pairing Codes** for seamless cross-network device discovery and connection
+- 📡 **Production Cloud Service** at `vscodercopilot.com.tr` for global device connectivity
 
-### Related Components
+### Live Production System
 
-- **VSCoder Mobile App**: React Native/Expo app with cloud pairing UI
-- **VSCoder Discovery Cloud**: Production Go-based API at `vscodercopilot.com.tr`
-- **Complete System**: End-to-end mobile development workflow with global connectivity
+- **VSCoder Mobile App v1.0.1**: Live on Google Play Store with 1-day free trial and premium subscriptions
+- **VSCoder Discovery API v2.0**: Production Go-based service at `api.vscodercopilot.com.tr`
+- **VSCoder Extension v1.2.2**: This VS Code extension optimized for mobile app integration
+- **Complete Ecosystem**: End-to-end mobile development workflow with live production deployment
 
 ## Contributing
 

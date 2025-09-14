@@ -7,6 +7,27 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { exec } from 'child_process';
 
+// Terminal Session Management Interfaces
+interface TerminalSessionData {
+    id: string;
+    name: string;
+    cwd: string;
+    terminal: vscode.Terminal;
+    isActive: boolean;
+    lastActivity: Date;
+    createdAt: Date;
+}
+
+interface TerminalCommand {
+    id: string;
+    sessionId: string;
+    command: string;
+    output: string;
+    timestamp: Date;
+    exitCode?: number;
+    isRunning: boolean;
+}
+
 export class VSCoderServer {
     private port: number;
     private copilotBridge: CopilotBridge;
@@ -20,6 +41,16 @@ export class VSCoderServer {
     // Message Pool System (for debugging and monitoring only)
     private messagePool: Map<string, any> = new Map(); // Store messages by ID
     private messageSequence: number = 0; // Global message sequence number
+
+    // Terminal Session Management
+    private terminalSessions: Map<string, TerminalSessionData> = new Map();
+    private terminalHistory: Map<string, TerminalCommand[]> = new Map();
+    private terminalMonitoringIntervals: Map<string, NodeJS.Timeout> = new Map();
+    private terminalSyncTimeouts: Map<string, NodeJS.Timeout> = new Map();
+
+    // Chat Sync Management
+    private chatSyncTimeout: NodeJS.Timeout | null = null;
+    private isChatSyncActive: boolean = false;
 
     constructor(port: number, copilotBridge: CopilotBridge) {
         console.log('🌐 VSCoderServer constructor called with port:', port);
@@ -38,7 +69,14 @@ export class VSCoderServer {
         });
         
         // Set up progress callback to route CopilotBridge progress updates to mobile app
+        // BUT ONLY when chat sync is actively requested (not constantly)
         this.copilotBridge.setProgressCallback(async (progressUpdate: any) => {
+            // Only send progress updates when chat sync is actively requested
+            if (!this.isChatSyncActive) {
+                console.log('🚫 Chat sync not active, skipping progress update');
+                return;
+            }
+            
             console.log('📨 ✅ CopilotBridge progress update received in VSCoderServer!');
             console.log('📨 Update type:', progressUpdate.updateType);
             console.log('📨 Full progress update:', progressUpdate);
@@ -82,6 +120,33 @@ export class VSCoderServer {
         });
         
         console.log('✅ VSCoderServer constructor completed');
+        
+        // Initialize terminal session management
+        this.initializeTerminalManagement();
+    }
+
+    /**
+     * Initialize terminal session management
+     */
+    private initializeTerminalManagement(): void {
+        console.log('🖥️ Initializing terminal session management...');
+        
+        // Listen for terminal disposal events
+        vscode.window.onDidCloseTerminal(terminal => {
+            console.log('🗑️ Terminal closed:', terminal.name);
+            
+            // Find and remove the closed terminal from our sessions
+            for (const [sessionId, session] of this.terminalSessions.entries()) {
+                if (session.terminal === terminal) {
+                    console.log('🗑️ Removing terminal session:', sessionId);
+                    this.terminalSessions.delete(sessionId);
+                    this.terminalHistory.delete(sessionId);
+                    break;
+                }
+            }
+        });
+        
+        console.log('✅ Terminal session management initialized');
     }
 
     private generateMessageId(): string {
@@ -209,15 +274,12 @@ export class VSCoderServer {
             await this.discoveryWebSocket.connect();
             console.log('🎉 WebSocket connection established successfully!');
 
-            // Start automatic chat history synchronization
-            console.log('🔄 Starting automatic chat history synchronization...');
-            this.startAutomaticChatSync();
-
             // Start WebSocket health monitoring
             console.log('💓 Starting WebSocket health monitoring...');
             this.startWebSocketHealthCheck();
 
             console.log('✅ WebSocket-based communication setup completed and listening');
+            console.log('⏳ Chat sync monitoring is OFF by default - waiting for mobile app requests');
         } catch (error) {
             console.error('❌ Failed to setup WebSocket communication:', error);
         }
@@ -230,14 +292,17 @@ export class VSCoderServer {
         console.log('📨 Received WebSocket message from Discovery API:', message.type, message.id);
         console.log('📨 Full WebSocket message:', JSON.stringify(message, null, 2));
 
-        if (message.type === 'command' && message.command) {
-            console.log('🎯 Processing command:', message.command, 'with data:', message.data);
+        // Fix: Check for command in data.command (mobile app format) or message.command (legacy format)
+        const commandName = message.data?.command || message.command;
+        
+        if (message.type === 'command' && commandName) {
+            console.log('🎯 Processing command:', commandName, 'with data:', message.data);
             
             // Convert WebSocket message to internal Message format
             const internalMessage: Message = {
                 id: message.id || `ws-${Date.now()}`,
                 type: 'command',
-                content: message.command,
+                content: commandName,
                 data: message.data,
                 timestamp: new Date()
             };
@@ -270,7 +335,7 @@ export class VSCoderServer {
                     }
                 });
         } else {
-            console.log('⚠️ Received non-command message or missing command:', message.type, message.command);
+            console.log('⚠️ Received non-command message or missing command:', message.type, 'command found:', commandName);
         }
     }
 
@@ -414,6 +479,49 @@ export class VSCoderServer {
                     result = await this.runVSCodeCommand(data.command, data.args);
                     break;
                 
+                // Terminal Session Management
+                case 'terminal_list_sessions':
+                    result = await this.listTerminalSessions();
+                    break;
+                case 'terminal_create_session':
+                    result = await this.createTerminalSession(data.name, data.cwd);
+                    break;
+                case 'terminal_get_history':
+                    result = await this.getTerminalHistory(data.sessionId);
+                    break;
+                case 'terminal_execute_command':
+                    result = await this.executeTerminalCommand(data.sessionId, data.cmd);
+                    break;
+                case 'terminal_kill_session':
+                    result = await this.killTerminalSession(data.sessionId);
+                    break;
+                case 'terminal_focus_session':
+                    result = await this.focusTerminalSession(data.sessionId);
+                    break;
+                case 'terminal_clear_session':
+                    result = await this.clearTerminalSession(data.sessionId);
+                    break;
+                case 'terminal_copy_last_command':
+                    result = await this.copyLastCommand(data.sessionId);
+                    break;
+                case 'terminal_copy_last_output':
+                    result = await this.copyLastCommandOutput(data.sessionId);
+                    break;
+                case 'terminal_rename_session':
+                    result = await this.renameTerminalSession(data.sessionId, data.newName);
+                    break;
+                case 'terminal_split_session':
+                    result = await this.splitTerminalSession(data.sessionId);
+                    break;
+                    
+                case 'request_terminal_sync':
+                    result = await this.handleTerminalSyncRequest(data.sessionId);
+                    break;
+                    
+                case 'request_chat_sync':
+                    result = await this.handleChatSyncRequest();
+                    break;
+                
                 // Copilot Operations
                 case 'copilot_chat':
                     result = await this.handleCopilotChat(data.prompt, data.mode, data.agentMode);
@@ -454,86 +562,13 @@ export class VSCoderServer {
                 case 'copilot_add_file_to_chat':
                     result = await this.addFileToChat(data.filePath);
                     break;
-                case 'copilot_run_pending_commands':
-                    result = await this.copilotBridge.runPendingCommands();
-                    break;
-                case 'copilot_continue_iteration':
-                    result = await this.copilotBridge.continueIteration();
-                    break;
-                case 'copilot_auto_execute':
-                    result = await this.autoCopilotExecute();
-                    break;
                 case 'copilot_new_session':
                     result = await this.startNewCopilotSession();
                     break;
-                case 'request_chat_sync':
-                    console.log('🔄 Mobile app requesting chat history sync...');
-                    
-                    // Ensure WebSocket is connected before starting sync
-                    if (!this.discoveryWebSocket.isWebSocketConnected()) {
-                        console.log('⚡ WebSocket not connected, attempting to reconnect...');
-                        try {
-                            await this.discoveryWebSocket.connect();
-                            console.log('✅ WebSocket reconnected successfully');
-                        } catch (wsError) {
-                            console.warn('⚠️ WebSocket reconnection failed, but continuing with sync:', wsError);
-                        }
-                    }
-                    
-                    // 🔥 CRITICAL FIX: Set up progress callback for chat sync before starting
-                    console.log('🔧 Setting up progress callback for chat sync...');
-                    this.copilotBridge.setProgressCallback((update: any) => {
-                        const messageId = this.generateMessageId();
-                        
-                        console.log('📡 🎯 Chat sync progress callback triggered!', update.updateType, messageId);
-                        console.log('📡 🔍 Progress update data:', update);
-                        
-                        // Check if we've already sent this message
-                        const contentHash = this.hashContent(update);
-                        if (this.sentMessages.has(contentHash)) {
-                            console.log('🚫 Skipping duplicate chat sync progress update:', messageId);
-                            return;
-                        }
-                        
-                        const progressMessage = {
-                            type: 'copilotProgress',
-                            updateType: update.updateType,
-                            data: update.data,
-                            timestamp: update.timestamp,
-                            messageId: messageId,
-                            originalMessageId: messageId,
-                            sessionId: this.currentSessionId
-                        };
-                        
-                        // Add to message pool first for reliability
-                        this.addToMessagePool(progressMessage);
-                        
-                        console.log('📡 Sending chat sync progress via Discovery WebSocket...', update.updateType, messageId);
-                        // Send via Discovery WebSocket for remote communication
-                        this.discoveryWebSocket.send({
-                            type: 'notification',
-                            data: progressMessage,
-                            timestamp: new Date().toISOString()
-                        });
-                        
-                        this.sentMessages.add(contentHash);
-                        console.log('📡 ✅ Chat sync progress update sent successfully!');
-                    });
-                    
-                    console.log('🚀 Starting chat history sync with callback configured...');
-                    await this.copilotBridge.startChatHistorySync();
-                    console.log('🔍 DEBUG: startChatHistorySync completed - initial sync should be done');
-                    
-                    // Create a proper result object since startChatHistorySync now properly awaits initial sync
-                    result = {
-                        success: true,
-                        message: 'Chat history sync completed and monitoring started',
-                        status: 'sync_completed',
-                        timestamp: new Date().toISOString()
-                    };
-                    console.log('✅ Chat sync triggered from mobile app request, result:', result);
+                case 'copilot_reload_extension':
+                    result = await this.reloadCopilot();
                     break;
-                
+                 
                 // Advanced File Operations
                 case 'create_file':
                     result = await this.createFile(data.path, data.content || '');
@@ -602,6 +637,11 @@ export class VSCoderServer {
                     break;
                 case 'get_settings':
                     result = await this.getSettings();
+                    break;
+
+                // Extension Operations
+                case 'reload_extension':
+                    result = await this.reloadWindow();
                     break;
                 
                 default:
@@ -821,6 +861,9 @@ export class VSCoderServer {
             console.log('📡 Setting up remote WebSocket communication...');
             await this.setupApiCommunication();
             
+            // DO NOT start automatic chat sync - wait for mobile app to request it
+            console.log('⏳ Chat sync will start when mobile app requests it');
+            
             console.log('✅ Discovery service authentication and registration completed');
             console.log('🎉 VSCoder WebSocket communication started successfully');
         } catch (error) {
@@ -944,45 +987,13 @@ export class VSCoderServer {
                 agentMode: agentMode as 'autonomous' | 'interactive' | 'code-review' | 'refactor' | 'optimize' | 'debug' || 'interactive'
             };
             
-            // Set up progress callback for real-time updates
-            this.copilotBridge.setProgressCallback((update: any) => {
-                const messageId = this.generateMessageId();
-                
-                // Check if we've already sent this message
-                const contentHash = this.hashContent(update);
-                if (this.sentMessages.has(contentHash)) {
-                    console.log('🚫 Skipping duplicate progress update:', messageId);
-                    return;
-                }
-                
-                const progressMessage = {
-                    type: 'copilotProgress',
-                    updateType: update.updateType,
-                    data: update.data,
-                    timestamp: update.timestamp,
-                    messageId: messageId,
-                    originalMessageId: messageId,
-                    sessionId: this.currentSessionId
-                };
-                
-                // Add to message pool first for reliability
-                this.addToMessagePool(progressMessage);
-                
-                console.log('📡 Sending progress update via Discovery WebSocket...', update.updateType, messageId);
-                // Send via Discovery WebSocket for remote communication
-                this.discoveryWebSocket.send({
-                    type: 'notification',
-                    data: progressMessage,
-                    timestamp: new Date().toISOString()
-                });
-                
-                this.sentMessages.add(contentHash);
-            });
+            // Start chat sync monitoring for this request (enables progress callback processing)
+            this.startChatSyncMonitoring();
             
             const response = await this.copilotBridge.handleCopilotRequest(copilotRequest);
             
             // Also broadcast the final response to all WebSocket clients for real-time updates
-            if (response.success && response.data) {
+            if (response.success && response.data && this.isChatSyncActive) {
                 const messageId = this.generateMessageId();
                 const contentHash = this.hashContent(response.data);
                 
@@ -1169,43 +1180,18 @@ export class VSCoderServer {
         }
     }
 
-    private async autoCopilotExecute(): Promise<any> {
-        try {
-            console.log('⚡ Auto-executing pending actions via command...');
-            
-            // Only run pending commands, don't trigger new iteration
-            const pendingResult = await this.copilotBridge.runPendingCommands();
-            let totalActions = 0;
-            
-            if (pendingResult.success) {
-                totalActions += pendingResult.data?.commandsRun || 0;
-            }
-
-            const result = {
-                success: true,
-                data: {
-                    commandsRun: totalActions,
-                    action: 'auto_executed',
-                    pendingCommandsResult: pendingResult
-                },
-                message: totalActions > 0 ? 'Auto-executed all pending actions' : 'No pending actions found'
-            };
-            
-            console.log('✅ Auto-execute result:', result);
-            return result;
-        } catch (error) {
-            console.error('❌ Error auto-executing:', error);
-            return { 
-                success: false, 
-                error: error instanceof Error ? error.message : 'Unknown error' 
-            };
-        }
-    }
-
     private async startNewCopilotSession(): Promise<any> {
         try {
-            console.log('🔄 Starting new chat session via command...');
+            console.log('🔄 Starting new chat session via VS Code commands...');
             this.startNewSession();
+            
+            // Start a new chat session using proper VS Code commands
+            try {
+                await vscode.commands.executeCommand('workbench.action.chat.newChat');
+                console.log('✅ New chat session started via workbench.action.chat.newChat');
+            } catch (chatError) {
+                console.warn('⚠️ Failed to start new chat session, trying alternative command:', chatError);
+            }
             
             // Send session reset notification to mobile app via Discovery WebSocket
             const sessionResetMessage = {
@@ -1238,25 +1224,58 @@ export class VSCoderServer {
     }
 
     /**
-     * Start automatic chat history synchronization
+     * Reload Copilot extension to fix memory issues and crashes
      */
-    private startAutomaticChatSync(): void {
-        console.log('🔄 Initializing automatic chat history sync...');
-        
-        // Check if we can sync (pairing code available)
-        if (!this.discoveryService.getPairingCode() || !this.discoveryService.isDeviceAuthenticated()) {
-            console.log('⚠️ Chat history sync not available - no active mobile connection');
-            return;
-        }
-
-        // Actually start the chat history sync using the CopilotBridge
-        console.log('🚀 Starting real chat history synchronization...');
+    private async reloadCopilot(): Promise<any> {
         try {
-            // Access the private method using type assertion to bypass TypeScript protection
-            (this.copilotBridge as any).startChatHistorySync();
-            console.log('✅ Chat history sync started successfully');
+            console.log('🔄 Reloading Copilot extension to fix memory issues...');
+            
+            // Reload the GitHub Copilot extension specifically
+            await vscode.commands.executeCommand(
+                'workbench.extensions.action.refreshExtension',
+                'GitHub.copilot'
+            );
+            
+            console.log('✅ Copilot extension reload command executed');
+            
+            return { 
+                success: true, 
+                message: 'Copilot extension reload initiated' 
+            };
         } catch (error) {
-            console.error('❌ Failed to start chat history sync:', error);
+            console.error('❌ Error reloading Copilot extension:', error);
+            return { 
+                success: false, 
+                error: error instanceof Error ? error.message : 'Unknown error' 
+            };
+        }
+    }
+
+    /**
+     * Reload VS Code window
+     */
+    private async reloadWindow(): Promise<any> {
+        try {
+            console.log('🔄 Reloading GitHub Copilot extension...');
+            
+            // Reload the GitHub Copilot extension (same as copilot_reload_extension)
+            await vscode.commands.executeCommand(
+                'workbench.extensions.action.reloadExtension',
+                'GitHub.copilot'
+            );
+            
+            console.log('✅ GitHub Copilot extension reload command executed');
+            
+            return { 
+                success: true, 
+                message: 'GitHub Copilot extension reload initiated' 
+            };
+        } catch (error) {
+            console.error('❌ Error reloading GitHub Copilot extension:', error);
+            return { 
+                success: false, 
+                error: error instanceof Error ? error.message : 'Unknown error' 
+            };
         }
     }
 
@@ -1282,6 +1301,25 @@ export class VSCoderServer {
 
     public async stop(): Promise<void> {
         console.log('🛑 Stopping VSCoder WebSocket communication...');
+        
+        // Clean up chat sync monitoring
+        console.log('💬 Cleaning up chat sync monitoring...');
+        this.stopChatSyncMonitoring();
+        console.log('✅ Chat sync monitoring cleaned up');
+        
+        // Clean up terminal sessions
+        console.log('🖥️ Cleaning up terminal sessions...');
+        
+        // Stop all terminal output monitoring first
+        this.stopAllTerminalSyncMonitoring();
+        
+        this.terminalSessions.forEach((session, sessionId) => {
+            console.log('🗑️ Disposing terminal session:', sessionId);
+            session.terminal.dispose();
+        });
+        this.terminalSessions.clear();
+        this.terminalHistory.clear();
+        console.log('✅ Terminal sessions cleaned up');
         
         // Stop WebSocket connection to Discovery API
         if (this.discoveryWebSocket) {
@@ -2347,5 +2385,943 @@ export class VSCoderServer {
                 error: error instanceof Error ? error.message : 'Unknown error'
             };
         }
+    }
+
+    // ===== TERMINAL SESSION MANAGEMENT =====
+
+    /**
+     * List all terminal sessions
+     */
+    private async listTerminalSessions(): Promise<any> {
+        try {
+            const sessions = Array.from(this.terminalSessions.values()).map(session => ({
+                id: session.id,
+                name: session.name,
+                cwd: session.cwd,
+                isActive: session.isActive,
+                lastActivity: session.lastActivity,
+                createdAt: session.createdAt
+            }));
+
+            return {
+                success: true,
+                sessions: sessions
+            };
+        } catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error'
+            };
+        }
+    }
+
+    /**
+     * Create a new terminal session
+     */
+    private async createTerminalSession(name?: string, cwd?: string): Promise<any> {
+        try {
+            const sessionId = `terminal-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+            const sessionName = name || `Terminal ${this.terminalSessions.size + 1}`;
+            
+            // Get workspace folder for default cwd
+            const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+            const defaultCwd = workspaceFolder?.uri.fsPath || process.cwd();
+            const sessionCwd = cwd || defaultCwd;
+
+            // Create VS Code terminal using native command
+            const terminal = vscode.window.createTerminal({
+                name: sessionName,
+                cwd: sessionCwd
+            });
+
+            // Create session data
+            const sessionData: TerminalSessionData = {
+                id: sessionId,
+                name: sessionName,
+                cwd: sessionCwd,
+                terminal: terminal,
+                isActive: true,
+                lastActivity: new Date(),
+                createdAt: new Date()
+            };
+
+            // Set all other sessions to inactive
+            this.terminalSessions.forEach(session => {
+                session.isActive = false;
+            });
+
+            // Store session
+            this.terminalSessions.set(sessionId, sessionData);
+            this.terminalHistory.set(sessionId, []);
+
+            // Focus the terminal using VS Code command
+            await vscode.commands.executeCommand('workbench.action.terminal.focus');
+            
+            // Note: Terminal monitoring now starts only when mobile app requests sync via request_terminal_sync
+
+            return {
+                success: true,
+                session: {
+                    id: sessionId,
+                    name: sessionName,
+                    cwd: sessionCwd,
+                    isActive: true,
+                    lastActivity: sessionData.lastActivity,
+                    createdAt: sessionData.createdAt
+                }
+            };
+        } catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error'
+            };
+        }
+    }
+
+    /**
+     * Get terminal command history for a session
+     */
+    private async getTerminalHistory(sessionId: string): Promise<any> {
+        try {
+            if (!sessionId) {
+                return {
+                    success: false,
+                    error: 'Session ID is required'
+                };
+            }
+
+            const history = this.terminalHistory.get(sessionId) || [];
+            
+            return {
+                success: true,
+                history: history
+            };
+        } catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error'
+            };
+        }
+    }
+
+    /**
+     * Execute a command in a terminal session
+     */
+    private async executeTerminalCommand(sessionId: string, cmd: string): Promise<any> {
+        try {
+            if (!sessionId || !cmd) {
+                return {
+                    success: false,
+                    error: 'Session ID and cmd are required'
+                };
+            }
+
+            const session = this.terminalSessions.get(sessionId);
+            if (!session) {
+                return {
+                    success: false,
+                    error: `Terminal session not found: ${sessionId}`
+                };
+            }
+
+            // Update session activity
+            session.lastActivity = new Date();
+            session.isActive = true;
+
+            // Set all other sessions to inactive
+            this.terminalSessions.forEach((s, id) => {
+                if (id !== sessionId) {
+                    s.isActive = false;
+                }
+            });
+
+            // Show and focus the terminal
+            session.terminal.show();
+            await vscode.commands.executeCommand('workbench.action.terminal.focus');
+
+            // Handle special commands using VS Code built-in commands
+            const lowerCommand = cmd.toLowerCase().trim();
+            
+            if (lowerCommand === 'clear' || lowerCommand === 'cls') {
+                // Use VS Code's built-in clear command
+                await vscode.commands.executeCommand('workbench.action.terminal.clear');
+                
+                // Clear our command history for this session
+                this.terminalHistory.set(sessionId, []);
+                
+                return {
+                    success: true,
+                    output: 'Terminal cleared',
+                    sessionId: sessionId
+                };
+            } else {
+                // Execute the command in terminal
+                await vscode.commands.executeCommand('workbench.action.terminal.sendSequence', { 
+                    text: cmd + '\n' 
+                });
+
+                // Start interval-based terminal output monitoring for this session
+                // Note: Now handled by request_terminal_sync command from mobile app
+                
+                return {
+                    success: true,
+                    output: 'Command executed - use request_terminal_sync to monitor output',
+                    sessionId: sessionId
+                };
+            }
+        } catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error'
+            };
+        }
+    }
+
+    /**
+     * Capture terminal output using VS Code commands
+     */
+    private async captureTerminalOutput(): Promise<string> {
+        try {
+            // Make sure terminal is focused
+            await vscode.commands.executeCommand('workbench.action.terminal.focus');
+            
+            // Select all terminal content
+            await vscode.commands.executeCommand('workbench.action.terminal.selectAll');
+            
+            // Copy selection to clipboard
+            await vscode.commands.executeCommand('workbench.action.terminal.copySelection');
+            
+            // Get the copied content from clipboard
+            const terminalContent = await vscode.env.clipboard.readText();
+            
+            // Clear selection to avoid visual distraction
+            await vscode.commands.executeCommand('workbench.action.terminal.clearSelection');
+            
+            return terminalContent;
+        } catch (error) {
+            console.error('Failed to capture terminal output:', error);
+            return '';
+        }
+    }
+
+    /**
+     * Parse terminal output to extract command history (similar to copilot chat sync)
+     */
+    private parseTerminalOutput(terminalContent: string, sessionId: string): TerminalCommand[] {
+        try {
+            const lines = terminalContent.split('\n');
+            const commands: TerminalCommand[] = [];
+            let currentCommand: TerminalCommand | null = null;
+            let outputBuffer: string[] = [];
+
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
+                
+                // Skip completely empty lines
+                if (line.trim() === '') {
+                    if (currentCommand) {
+                        outputBuffer.push('');
+                    }
+                    continue;
+                }
+                
+                // Detect PowerShell command prompts: PS C:\path> command
+                const powershellMatch = line.match(/^PS\s+[A-Za-z]:[^>]*>\s+(.+)$/);
+                
+                if (powershellMatch) {
+                    // Save previous command if exists
+                    if (currentCommand) {
+                        currentCommand.output = outputBuffer.join('\n').trim();
+                        currentCommand.isRunning = false;
+                        commands.push(currentCommand);
+                        outputBuffer = [];
+                    }
+                    
+                    // Extract command from PowerShell prompt
+                    const command = powershellMatch[1].trim();
+                    if (command) {
+                        currentCommand = {
+                            id: `cmd-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                            sessionId: sessionId,
+                            command: command,
+                            output: '',
+                            timestamp: new Date(),
+                            isRunning: false
+                        };
+                    }
+                } else if (this.isCommandPromptLine(line)) {
+                    // Handle other command prompt types
+                    if (currentCommand) {
+                        currentCommand.output = outputBuffer.join('\n').trim();
+                        currentCommand.isRunning = false;
+                        commands.push(currentCommand);
+                        outputBuffer = [];
+                    }
+                    
+                    const command = this.extractCommandFromPrompt(line);
+                    if (command) {
+                        currentCommand = {
+                            id: `cmd-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                            sessionId: sessionId,
+                            command: command,
+                            output: '',
+                            timestamp: new Date(),
+                            isRunning: false
+                        };
+                    }
+                } else if (currentCommand) {
+                    // This is output from the current command
+                    outputBuffer.push(line);
+                }
+            }
+            
+            // Handle the last command
+            if (currentCommand) {
+                currentCommand.output = outputBuffer.join('\n').trim();
+                currentCommand.isRunning = false;
+                commands.push(currentCommand);
+            }
+            
+            // Return only the latest 10 commands (like copilot chat sync)
+            return commands.slice(-10);
+            
+        } catch (error) {
+            console.error('Failed to parse terminal output:', error);
+            return [];
+        }
+    }
+
+    /**
+     * Check if a line is a command prompt line
+     */
+    private isCommandPromptLine(line: string): boolean {
+        // PowerShell prompt pattern: PS C:\path> command
+        const powershellPattern = /^PS\s+[A-Za-z]:[^>]*>\s+.+/;
+        
+        // Other common prompt patterns
+        const otherPromptPatterns = [
+            /^\$\s+/,                    // $ prompt (Unix/Linux)
+            /^>\s+/,                     // > prompt
+            /^C:\\.*>\s+/,               // Windows cmd prompt
+            /^.*@.*:\s*.*\$\s+/,         // user@host:path$ pattern
+            /^.*~\s*\$\s+/,              // ~/path$ pattern
+            /^\w+:\s*.*>\s+/             // Drive:\path> pattern
+        ];
+        
+        // Check PowerShell pattern first (most specific for Windows)
+        if (powershellPattern.test(line)) {
+            return true;
+        }
+        
+        return otherPromptPatterns.some(pattern => pattern.test(line));
+    }
+
+    /**
+     * Extract command from prompt line
+     */
+    private extractCommandFromPrompt(line: string): string {
+        // Handle PowerShell prompt specifically: PS C:\path> command
+        const powershellMatch = line.match(/^PS\s+[A-Za-z]:[^>]*>\s+(.+)$/);
+        if (powershellMatch) {
+            return powershellMatch[1].trim();
+        }
+        
+        // Handle other prompt patterns
+        const cleanLine = line
+            .replace(/^\$\s+/, '')
+            .replace(/^>\s+/, '')
+            .replace(/^C:\\.*>\s+/, '')
+            .replace(/^.*@.*:\s*.*\$\s+/, '')
+            .replace(/^.*~\s*\$\s+/, '')
+            .replace(/^\w+:\s*.*>\s+/, '');
+            
+        return cleanLine.trim();
+    }
+
+    /**
+     * Kill a terminal session
+     */
+    private async killTerminalSession(sessionId: string): Promise<any> {
+        try {
+            if (!sessionId) {
+                return {
+                    success: false,
+                    error: 'Session ID is required'
+                };
+            }
+
+            const session = this.terminalSessions.get(sessionId);
+            if (!session) {
+                return {
+                    success: false,
+                    error: `Terminal session not found: ${sessionId}`
+                };
+            }
+
+            // Dispose the VS Code terminal
+            session.terminal.dispose();
+
+            // Stop monitoring for this session
+            this.stopTerminalSyncMonitoring(sessionId);
+
+            // Remove from our tracking
+            this.terminalSessions.delete(sessionId);
+            this.terminalHistory.delete(sessionId);
+
+            // If this was the active session, make another one active
+            if (session.isActive && this.terminalSessions.size > 0) {
+                const remainingSessions = Array.from(this.terminalSessions.values());
+                if (remainingSessions.length > 0) {
+                    remainingSessions[0].isActive = true;
+                }
+            }
+
+            return {
+                success: true,
+                message: `Terminal session ${sessionId} terminated`,
+                sessionId: sessionId
+            };
+        } catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error'
+            };
+        }
+    }
+
+    /**
+     * Focus a specific terminal session
+     */
+    private async focusTerminalSession(sessionId: string): Promise<any> {
+        try {
+            if (!sessionId) {
+                return {
+                    success: false,
+                    error: 'Session ID is required'
+                };
+            }
+
+            const session = this.terminalSessions.get(sessionId);
+            if (!session) {
+                return {
+                    success: false,
+                    error: `Terminal session not found: ${sessionId}`
+                };
+            }
+
+            // Set all sessions to inactive
+            this.terminalSessions.forEach(s => {
+                s.isActive = false;
+            });
+
+            // Set this session as active
+            session.isActive = true;
+            session.lastActivity = new Date();
+
+            // Show and focus the terminal
+            session.terminal.show();
+            await vscode.commands.executeCommand('workbench.action.terminal.focus');
+            
+            // Note: Terminal monitoring now starts only when mobile app requests sync via request_terminal_sync
+
+            return {
+                success: true,
+                message: `Terminal session ${sessionId} focused`,
+                sessionId: sessionId
+            };
+        } catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error'
+            };
+        }
+    }
+
+    /**
+     * Clear a terminal session
+     */
+    private async clearTerminalSession(sessionId: string): Promise<any> {
+        try {
+            if (!sessionId) {
+                return {
+                    success: false,
+                    error: 'Session ID is required'
+                };
+            }
+
+            const session = this.terminalSessions.get(sessionId);
+            if (!session) {
+                return {
+                    success: false,
+                    error: `Terminal session not found: ${sessionId}`
+                };
+            }
+
+            // Focus the terminal first
+            session.terminal.show();
+            
+            // Clear the terminal using VS Code command
+            await vscode.commands.executeCommand('workbench.action.terminal.clear');
+
+            // Clear our command history for this session
+            this.terminalHistory.set(sessionId, []);
+
+            session.lastActivity = new Date();
+
+            return {
+                success: true,
+                message: `Terminal session ${sessionId} cleared`,
+                sessionId: sessionId
+            };
+        } catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error'
+            };
+        }
+    }
+
+    /**
+     * Copy last command from terminal session
+     */
+    private async copyLastCommand(sessionId: string): Promise<any> {
+        try {
+            if (!sessionId) {
+                return {
+                    success: false,
+                    error: 'Session ID is required'
+                };
+            }
+
+            const session = this.terminalSessions.get(sessionId);
+            if (!session) {
+                return {
+                    success: false,
+                    error: `Terminal session not found: ${sessionId}`
+                };
+            }
+
+            // Focus the terminal first
+            session.terminal.show();
+            
+            // Use VS Code command to copy last command
+            await vscode.commands.executeCommand('workbench.action.terminal.copyLastCommand');
+
+            // Get the last command from our history
+            const history = this.terminalHistory.get(sessionId) || [];
+            const lastCommand = history.length > 0 ? history[history.length - 1] : null;
+
+            return {
+                success: true,
+                message: 'Last command copied to clipboard',
+                lastCommand: lastCommand?.command || 'No command history',
+                sessionId: sessionId
+            };
+        } catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error'
+            };
+        }
+    }
+
+    /**
+     * Copy last command output from terminal session
+     */
+    private async copyLastCommandOutput(sessionId: string): Promise<any> {
+        try {
+            if (!sessionId) {
+                return {
+                    success: false,
+                    error: 'Session ID is required'
+                };
+            }
+
+            const session = this.terminalSessions.get(sessionId);
+            if (!session) {
+                return {
+                    success: false,
+                    error: `Terminal session not found: ${sessionId}`
+                };
+            }
+
+            // Focus the terminal first
+            session.terminal.show();
+            
+            // Use VS Code command to copy last command output
+            await vscode.commands.executeCommand('workbench.action.terminal.copyLastCommandOutput');
+
+            // Get the last command output from our history
+            const history = this.terminalHistory.get(sessionId) || [];
+            const lastCommand = history.length > 0 ? history[history.length - 1] : null;
+
+            return {
+                success: true,
+                message: 'Last command output copied to clipboard',
+                lastOutput: lastCommand?.output || 'No command output available',
+                sessionId: sessionId
+            };
+        } catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error'
+            };
+        }
+    }
+
+    /**
+     * Rename a terminal session
+     */
+    private async renameTerminalSession(sessionId: string, newName: string): Promise<any> {
+        try {
+            if (!sessionId || !newName) {
+                return {
+                    success: false,
+                    error: 'Session ID and new name are required'
+                };
+            }
+
+            const session = this.terminalSessions.get(sessionId);
+            if (!session) {
+                return {
+                    success: false,
+                    error: `Terminal session not found: ${sessionId}`
+                };
+            }
+
+            // Focus the terminal first
+            session.terminal.show();
+            
+            // Use VS Code command to rename terminal with argument
+            await vscode.commands.executeCommand('workbench.action.terminal.renameWithArg', {
+                name: newName
+            });
+
+            // Update our session data
+            session.name = newName;
+            session.lastActivity = new Date();
+
+            return {
+                success: true,
+                message: `Terminal session renamed to: ${newName}`,
+                sessionId: sessionId,
+                newName: newName
+            };
+        } catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error'
+            };
+        }
+    }
+
+    /**
+     * Split a terminal session
+     */
+    private async splitTerminalSession(sessionId: string): Promise<any> {
+        try {
+            if (!sessionId) {
+                return {
+                    success: false,
+                    error: 'Session ID is required'
+                };
+            }
+
+            const session = this.terminalSessions.get(sessionId);
+            if (!session) {
+                return {
+                    success: false,
+                    error: `Terminal session not found: ${sessionId}`
+                };
+            }
+
+            // Focus the terminal first
+            session.terminal.show();
+            
+            // Use VS Code command to split terminal
+            await vscode.commands.executeCommand('workbench.action.terminal.split');
+
+            // Create a new session for the split terminal
+            // Note: VS Code will create the actual split, we just track it
+            const splitSessionId = `terminal-split-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+            
+            // We can't directly get the split terminal reference, so we'll create a placeholder
+            // The actual terminal will be managed by VS Code
+            const splitSessionData: TerminalSessionData = {
+                id: splitSessionId,
+                name: `${session.name} (Split)`,
+                cwd: session.cwd,
+                terminal: session.terminal, // Placeholder - VS Code manages the actual split
+                isActive: true,
+                lastActivity: new Date(),
+                createdAt: new Date()
+            };
+
+            // Set all other sessions to inactive
+            this.terminalSessions.forEach(s => {
+                s.isActive = false;
+            });
+
+            // Store the split session
+            this.terminalSessions.set(splitSessionId, splitSessionData);
+            this.terminalHistory.set(splitSessionId, []);
+
+            return {
+                success: true,
+                message: `Terminal session ${sessionId} split successfully`,
+                originalSessionId: sessionId,
+                splitSessionId: splitSessionId
+            };
+        } catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error'
+            };
+        }
+    }
+
+    /**
+     * Handle terminal sync request from mobile app
+     */
+    private async handleTerminalSyncRequest(sessionId?: string): Promise<any> {
+        try {
+            if (!sessionId) {
+                // If no session ID provided, sync all active sessions
+                const activeSessions = Array.from(this.terminalSessions.values())
+                    .filter(session => session.isActive);
+                
+                if (activeSessions.length === 0) {
+                    return {
+                        success: false,
+                        message: 'No active terminal sessions found'
+                    };
+                }
+                
+                sessionId = activeSessions[0].id;
+            }
+            
+            const session = this.terminalSessions.get(sessionId);
+            if (!session) {
+                return {
+                    success: false,
+                    error: `Terminal session not found: ${sessionId}`
+                };
+            }
+            
+            // Start monitoring for this session with auto-stop
+            this.startTerminalSyncMonitoring(sessionId);
+            
+            // Get current terminal output immediately
+            const terminalOutput = await this.captureTerminalOutput();
+            const currentHistory = this.parseTerminalOutput(terminalOutput, sessionId);
+            this.terminalHistory.set(sessionId, currentHistory);
+            
+            return {
+                success: true,
+                sessionId: sessionId,
+                history: currentHistory,
+                message: 'Terminal sync started - monitoring for 30 seconds'
+            };
+        } catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error'
+            };
+        }
+    }
+
+    /**
+     * Start terminal sync monitoring that auto-stops after 30 seconds
+     */
+    private startTerminalSyncMonitoring(sessionId: string): void {
+        // Stop any existing monitoring for this session
+        this.stopTerminalSyncMonitoring(sessionId);
+        
+        console.log(`🖥️ Starting request-based terminal sync monitoring for session: ${sessionId}`);
+        
+        // Monitor terminal output every 2 seconds
+        const monitoringInterval = setInterval(async () => {
+            try {
+                const session = this.terminalSessions.get(sessionId);
+                if (!session) {
+                    console.log(`⏹️ Session ${sessionId} no longer exists, stopping monitoring`);
+                    this.stopTerminalSyncMonitoring(sessionId);
+                    return;
+                }
+                
+                // Capture current terminal output
+                const terminalOutput = await this.captureTerminalOutput();
+                
+                if (terminalOutput) {
+                    // Parse and get recent commands/output
+                    const parsedHistory = this.parseTerminalOutput(terminalOutput, sessionId);
+                    
+                    // Get previous history to compare
+                    const previousHistory = this.terminalHistory.get(sessionId) || [];
+                    
+                    // Check if there are new commands
+                    if (parsedHistory.length > previousHistory.length) {
+                        console.log(`📝 New terminal output detected for session ${sessionId}:`, 
+                                  parsedHistory.length - previousHistory.length, 'new commands');
+                        
+                        // Update session history
+                        this.terminalHistory.set(sessionId, parsedHistory);
+                        
+                        // Send real-time update to mobile app
+                        const newCommands = parsedHistory.slice(previousHistory.length);
+                        if (newCommands.length > 0) {
+                            await this.sendMobileNotification(
+                                'Terminal Update',
+                                `New output in terminal session: ${session.name}`,
+                                {
+                                    type: 'terminal_sync_update',
+                                    sessionId: sessionId,
+                                    newCommands: newCommands,
+                                    fullHistory: parsedHistory
+                                }
+                            );
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error(`❌ Error in terminal sync monitoring for session ${sessionId}:`, error);
+            }
+        }, 2000); // Check every 2 seconds
+        
+        // Set up auto-stop after 30 seconds
+        const syncTimeout = setTimeout(() => {
+            console.log(`⏰ Terminal sync monitoring timed out for session ${sessionId} after 30 seconds`);
+            this.stopTerminalSyncMonitoring(sessionId);
+        }, 30000); // 30 seconds
+        
+        // Store the interval and timeout references
+        this.terminalMonitoringIntervals.set(sessionId, monitoringInterval);
+        this.terminalSyncTimeouts.set(sessionId, syncTimeout);
+    }
+    
+    /**
+     * Stop terminal sync monitoring for a session
+     */
+    private stopTerminalSyncMonitoring(sessionId: string): void {
+        // Clear monitoring interval
+        const interval = this.terminalMonitoringIntervals.get(sessionId);
+        if (interval) {
+            clearInterval(interval);
+            this.terminalMonitoringIntervals.delete(sessionId);
+        }
+        
+        // Clear timeout
+        const timeout = this.terminalSyncTimeouts.get(sessionId);
+        if (timeout) {
+            clearTimeout(timeout);
+            this.terminalSyncTimeouts.delete(sessionId);
+        }
+        
+        if (interval || timeout) {
+            console.log(`⏹️ Stopped terminal sync monitoring for session: ${sessionId}`);
+        }
+    }
+    
+    // ===== CHAT SYNC MANAGEMENT =====
+    
+    /**
+     * Handle chat sync request from mobile app
+     * This starts monitoring chat updates for 30 seconds
+     */
+    private async handleChatSyncRequest(): Promise<any> {
+        try {
+            console.log('💬 Chat sync requested by mobile app');
+            
+            // Ensure WebSocket is connected before starting sync
+            if (!this.discoveryWebSocket.isWebSocketConnected()) {
+                console.log('⚡ WebSocket not connected, attempting to reconnect...');
+                try {
+                    await this.discoveryWebSocket.connect();
+                    console.log('✅ WebSocket reconnected successfully');
+                } catch (wsError) {
+                    console.warn('⚠️ WebSocket reconnection failed, but continuing with sync:', wsError);
+                }
+            }
+            
+            // Start the actual chat history sync first
+            console.log('🚀 Starting chat history sync with request-based monitoring...');
+            await this.copilotBridge.startChatHistorySync();
+            console.log('🔍 DEBUG: startChatHistorySync completed - initial sync should be done');
+            
+            // Start chat sync monitoring (enables progress callback processing)
+            this.startChatSyncMonitoring();
+            
+            return {
+                success: true,
+                message: 'Chat sync monitoring started and history synced',
+                timeout: 30000, // 30 seconds
+                timestamp: new Date().toISOString()
+            };
+        } catch (error) {
+            console.error('❌ Error handling chat sync request:', error);
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : 'Chat sync request failed'
+            };
+        }
+    }
+    
+    /**
+     * Start chat sync monitoring for 30 seconds
+     * If already monitoring, extends the timeout
+     */
+    private startChatSyncMonitoring(): void {
+        console.log('🔄 Starting chat sync monitoring...');
+        
+        // Stop existing monitoring if any
+        this.stopChatSyncMonitoring();
+        
+        // Enable chat sync
+        this.isChatSyncActive = true;
+        console.log('✅ Chat sync monitoring is now ACTIVE');
+        
+        // Set timeout to stop monitoring after 30 seconds
+        this.chatSyncTimeout = setTimeout(() => {
+            console.log('⏰ Chat sync monitoring timeout reached (30s)');
+            this.stopChatSyncMonitoring();
+        }, 30000); // 30 seconds
+        
+        console.log('⏳ Chat sync monitoring will stop automatically in 30 seconds');
+    }
+    
+    /**
+     * Stop chat sync monitoring
+     */
+    private stopChatSyncMonitoring(): void {
+        if (this.chatSyncTimeout) {
+            clearTimeout(this.chatSyncTimeout);
+            this.chatSyncTimeout = null;
+        }
+        
+        if (this.isChatSyncActive) {
+            this.isChatSyncActive = false;
+            console.log('⏹️ Chat sync monitoring is now INACTIVE');
+        }
+    }
+    
+    /**
+     * Stop all terminal sync monitoring
+     */
+    private stopAllTerminalSyncMonitoring(): void {
+        console.log('🛑 Stopping all terminal sync monitoring...');
+        
+        // Clear all intervals
+        this.terminalMonitoringIntervals.forEach((interval, sessionId) => {
+            clearInterval(interval);
+            console.log(`⏹️ Stopped monitoring interval for session: ${sessionId}`);
+        });
+        this.terminalMonitoringIntervals.clear();
+        
+        // Clear all timeouts
+        this.terminalSyncTimeouts.forEach((timeout, sessionId) => {
+            clearTimeout(timeout);
+            console.log(`⏹️ Stopped timeout for session: ${sessionId}`);
+        });
+        this.terminalSyncTimeouts.clear();
     }
 }

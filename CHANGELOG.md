@@ -2,6 +2,74 @@
 
 All notable changes to the "VSCoder Copilot" extension will be documented in this file.
 
+## [1.2.3] - 2025-09-13
+
+### 🔧 Stability & Reliability Improvements
+
+#### 🛠️ Extension Reload Functionality
+- **GitHub Copilot Extension Reload**: Added `reloadCopilot()` method to fix memory issues and extension crashes
+- **Dual Reload Commands**: Implemented both `copilot_reload_extension` and `reload_extension` commands targeting GitHub.copilot
+- **Mobile App Integration**: Connected mobile app reload button to VS Code extension reload functionality
+- **Memory Management**: Enhanced memory leak prevention through programmatic extension reload
+
+#### 🚀 UI/UX Enhancements
+- **New Chat Button Fix**: Resolved broken new chat session functionality that was causing WebSocket connection issues
+- **State Management**: Fixed `startNewChatSession()` to properly clear local state without resetting WebSocket connections
+- **Clean Production Logs**: Removed verbose console logging from TerminalView and other components for production readiness
+- **Button Functionality**: Connected previously broken reload and new chat buttons to proper service methods
+
+#### 📱 Mobile App Improvements
+- **Business Logic Integration**: Enhanced `useBusinessLogic.ts` with proper `handleReloadCopilot` function
+- **Service Method Connection**: Improved VSCoderService integration with extension reload capabilities
+- **Version Synchronization**: Updated mobile app version to 1.0.3 across all configuration files
+- **EAS Build Preparation**: Updated app.json with correct version and incremented Android versionCode
+
+#### 🔄 Code Quality & Maintenance
+- **Function Naming**: Improved method naming for better code readability (e.g., `reloadCopilotExtension` → `reloadCopilot`)
+- **Error Handling**: Enhanced error handling and logging for extension reload operations
+- **Production Optimization**: Cleaned up development logging for better production performance
+- **Documentation**: Updated DEV_NOTES.md with completed tasks and version information
+
+#### ⚡ Performance Optimizations
+- **Reduced Logging Overhead**: Minimized console output for improved production performance
+- **State Cleanup**: Better session state management without unnecessary WebSocket resets
+- **Memory Efficiency**: Improved extension reload targeting to prevent unnecessary resource usage
+- **Connection Stability**: Enhanced WebSocket connection reliability through proper state management
+
+#### 🛡️ Stability Enhancements
+- **Extension Crash Prevention**: Implemented reload functionality to address GitHub Copilot memory limit crashes
+- **Graceful Recovery**: Added proper error handling for extension reload operations
+- **Session Persistence**: Maintained chat session continuity while fixing underlying connection issues
+- **Robust Reconnection**: Enhanced connection management without disrupting user workflow
+
+## [1.2.2] - 2025-09-12
+
+### 🚀 Mobile App Integration & Production Optimization
+
+#### 📱 Enhanced Mobile App Compatibility
+- **Mobile App v1.0.1 Integration**: Optimized compatibility with VSCoder Copilot mobile app v1.0.1 now live on Google Play Store
+- **Improved Pairing Reliability**: Enhanced 6-digit pairing code generation and validation for better mobile connection experience
+- **Subscription Synchronization**: Better handling of mobile app subscription states including updated 1-day trial periods
+- **Connection Stability**: Enhanced WebSocket connection stability specifically for mobile app communication patterns
+
+#### 🔐 Authentication & Security Enhancements
+- **Updated Trial Handling**: Synchronized with mobile app's updated 1-day trial subscription model (updated from 7-day)
+- **Enhanced Token Validation**: Improved token validation flow for better mobile app authentication experience
+- **Production Security**: Enhanced security measures for live Google Play Store deployment compatibility
+- **Cross-Network Optimization**: Improved security and reliability for cross-network device pairing
+
+#### ⚡ Performance & Reliability Improvements
+- **Memory Optimization**: Reduced memory usage and improved response times for mobile interactions
+- **Error Recovery**: Enhanced automatic error recovery mechanisms for mobile app connection issues
+- **Diagnostic Improvements**: Better diagnostic commands and error messages for mobile app troubleshooting
+- **Production Readiness**: Optimizations specifically for live production mobile app deployment
+
+#### 🛠️ Developer Experience Enhancements
+- **Enhanced Status Indicators**: Improved status bar indicators for mobile app connection states
+- **Better Error Messages**: More informative error messages and guidance for mobile pairing issues
+- **Enhanced Logging**: Improved logging and debugging capabilities for mobile integration troubleshooting
+- **Mobile-Specific Diagnostics**: Enhanced diagnostic commands specifically for mobile app connection issues
+
 ## [1.2.1] - 2025-09-05
 
 ### 🚀 Performance Optimization & Webpack Bundling
