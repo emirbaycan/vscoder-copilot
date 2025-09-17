@@ -433,13 +433,97 @@ export class DiscoveryService {
      * Unregister from the discovery service
      */
     public async unregister(): Promise<void> {
+        // Send disconnect notification if we have a pairing code
+        if (this.pairingCode) {
+            try {
+                console.log('📡 Sending VS Code disconnect notification to Discovery API...');
+                await this.sendDisconnectNotification();
+                console.log('✅ VS Code disconnect notification sent successfully');
+            } catch (error) {
+                console.warn('⚠️ Failed to send disconnect notification:', error);
+                // Don't throw - this is cleanup, shouldn't block shutdown
+            }
+        }
+        
         if (this.registrationInterval) {
             clearInterval(this.registrationInterval);
             this.registrationInterval = undefined;
         }
 
         this.isRegistered = false;
+        this.pairingCode = undefined; // Clear pairing code on disconnect
         console.log('🛑 Unregistered from discovery service');
+    }
+
+    /**
+     * Send disconnect notification to Discovery API
+     */
+    private async sendDisconnectNotification(): Promise<void> {
+        if (!this.pairingCode) {
+            console.log('⚠️ No pairing code available for disconnect notification');
+            return;
+        }
+
+        const disconnectData = {
+            pairing_code: this.pairingCode,
+            device_token: this.deviceToken,
+            reason: 'vscode_shutdown',
+            device_info: {
+                name: 'VS Code Extension',
+                platform: process.platform,
+                version: vscode.version
+            }
+        };
+
+        return new Promise<void>((resolve, reject) => {
+            const data = JSON.stringify(disconnectData);
+            const url = new URL(`${this.config.apiUrl}/api/v1/device/disconnect`);
+            
+            const options = {
+                hostname: url.hostname,
+                port: url.port || (url.protocol === 'https:' ? 443 : 80),
+                path: url.pathname,
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Content-Length': Buffer.byteLength(data),
+                    'User-Agent': 'VSCoder-Extension'
+                }
+            };
+
+            const protocol = url.protocol === 'https:' ? https : http;
+            const req = protocol.request(options, (res) => {
+                let responseData = '';
+                res.on('data', (chunk) => {
+                    responseData += chunk;
+                });
+                
+                res.on('end', () => {
+                    if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+                        console.log('✅ Disconnect notification sent successfully');
+                        resolve();
+                    } else {
+                        console.warn(`⚠️ Disconnect notification failed with status ${res.statusCode}: ${responseData}`);
+                        resolve(); // Don't reject on disconnect failure
+                    }
+                });
+            });
+
+            req.on('error', (error) => {
+                console.warn('⚠️ Error sending disconnect notification:', error.message);
+                resolve(); // Don't reject on disconnect failure
+            });
+
+            // Set timeout for disconnect request
+            req.setTimeout(5000, () => {
+                req.destroy();
+                console.warn('⚠️ Disconnect notification timed out');
+                resolve(); // Don't reject on timeout
+            });
+
+            req.write(data);
+            req.end();
+        });
     }
 
     /**

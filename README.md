@@ -4,6 +4,8 @@ Transform your smartphone into an intelligent coding companion! VSCoder brings G
 
 **Perfect for:** Code reviews on commute • Quick fixes from anywhere • AI-assisted mobile coding • Remote development workflows
 
+> **🎉 Latest Update (v1.2.4)**: Enhanced user experience with clean notification-based validation instead of modal dialogs, plus complete disconnect cleanup system for better device management!
+
 ## ✨ What Makes VSCoder Special
 
 **🌍 Code From Anywhere**
@@ -27,11 +29,14 @@ Transform your smartphone into an intelligent coding companion! VSCoder brings G
 - Your code never leaves your devices
 - Encrypted end-to-end communication
 - Pairing codes expire every 10 minutes for security
-- **Device Validation Pipeline**: VS Code shows security dialogs when mobile devices request access
+- **Device Validation Pipeline**: VS Code shows user-friendly notification dialogs when mobile devices request access
 - **User Authorization Required**: You must explicitly approve each device connection attempt
-- **Device Information Display**: See device name, platform, and IP address before approving
-- **Granular Access Control**: Approve or deny device access on a per-device basis
+- **Enhanced Device Information**: Approval notifications show friendly device names and platform information with emojis
+- **Granular Access Control**: Approve or deny device access on a per-device basis with Approve/Deny/Details buttons
 - **Session Management**: Approved devices receive secure authentication tokens for ongoing access
+- **Professional UI**: Clean notification system at bottom-right instead of intrusive modal dialogs
+- **Complete Disconnect Cleanup**: Automatic cleanup when devices are removed or VS Code shuts down
+- **Smart State Management**: Proper cleanup of authentication state when profiles are deleted in mobile app
 
 > **💡 Use Case**: Review pull requests on your commute, fix bugs from the coffee shop, or get AI coding help while away from your desk!
 
@@ -60,6 +65,8 @@ Transform your smartphone into an intelligent coding companion! VSCoder brings G
 - **Multiple AI Models**: Switch between GPT-4o, Claude, and other Copilot models
 - **Command Execution**: Run terminal commands suggested by AI
 - **Session Management**: Persistent conversations across reconnections
+- **Enhanced UX**: Non-intrusive notifications replace modal dialogs for better workflow
+- **Smart Cleanup**: Automatic state management when devices connect or disconnect
 
 ## 🚀 Quick Start (2 Minutes)
 
@@ -83,9 +90,11 @@ Transform your smartphone into an intelligent coding companion! VSCoder brings G
 - **App Store**: Search "VSCoder Copilot" (iOS version)
 - **Open app** → **Settings** → **Profiles** → **"Pair with VS Code"**
 - **Enter the 6-digit code** from step 3
-- **⚠️ SECURITY VALIDATION**: When the mobile device requests access, VS Code will show a security dialog with device information (name, platform, IP address)
-- **⚡ USER APPROVAL REQUIRED**: Click "Approve Device" in VS Code to grant the mobile device access to your workspace
+- **⚠️ SECURITY VALIDATION**: When the mobile device requests access, VS Code will show a user-friendly notification at the bottom-right with device information
+- **⚡ USER APPROVAL REQUIRED**: Click "Approve" in the notification to grant the mobile device access to your workspace
+- **📱 DEVICE DETAILS**: The notification shows friendly device information with emojis (e.g., "📱 Mobile device 'iPhone (iOS)' wants to connect")
 - **🔐 SECURITY NOTE**: Only approve devices you trust - this grants access to your VS Code workspace and files
+- **✨ ENHANCED UX**: Clean, non-intrusive notifications with Approve/Deny/Details buttons for better user experience
 - **Connection established** automatically after approval - works across any network!
 
 ### Step 5: Start AI-Powered Coding! 🎉
@@ -1114,11 +1123,12 @@ This tool will:
 
 **What you see**: Mobile app stays on "Connecting..." or shows validation errors
 **Quick fix**:
-1. **Check VS Code**: Look for a security dialog asking to approve the device
-2. **If no dialog appears**: Run `VSCoder: Show Status` to check WebSocket connection
-3. **Click "Approve Device"** when the dialog appears
-4. **If dialog was missed**: Mobile app will timeout, try connecting again
-5. **Check firewall**: Ensure VS Code can receive WebSocket notifications
+1. **Check VS Code**: Look for a notification at the bottom-right asking to approve the device
+2. **If no notification appears**: Run `VSCoder: Show Status` to check WebSocket connection
+3. **Click "Approve"** when the notification appears with device information
+4. **If notification was missed**: Mobile app will timeout, try connecting again
+5. **Check notification details**: Use "Details" button to see comprehensive device information
+6. **Check firewall**: Ensure VS Code can receive WebSocket notifications
 
 #### ⏰ "Validation Request Expired"
 

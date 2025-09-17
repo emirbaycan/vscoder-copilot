@@ -2,30 +2,52 @@
 
 All notable changes to the "VSCoder Copilot" extension will be documented in this file.
 
-## [1.2.4] - 2025-09-17
+## [1.2.4] - 2025-09-18
 
-### 🔐 Enhanced Security & Device Validation
+### 🎨 Enhanced User Experience & Validation Flow
+
+#### ✨ Improved Validation UI
+- **Non-Modal Notifications**: Replaced "horrible" modal dialogs with clean, non-intrusive notifications at bottom-right
+- **User-Friendly Messaging**: Enhanced device information display with emoji-based friendly messaging
+- **Progressive Disclosure**: Added Details button for comprehensive device information when needed
+- **Professional Appearance**: Validation notifications now match VS Code's design language for better integration
+- **Streamlined Approval**: Approve/Deny/Details buttons provide intuitive validation workflow
+
+#### � Complete Disconnect Notification System
+- **Mobile App Disconnect**: Mobile app now properly notifies VS Code when profiles are deleted
+- **VS Code Shutdown Cleanup**: Extension sends disconnect notifications when VS Code closes
+- **API Server Integration**: Added `/api/v1/device/disconnect` endpoint for proper cleanup
+- **Enhanced Device Detection**: Server now detects device types (mobile/vscode) for better logging
+- **Comprehensive Cleanup**: Complete state cleanup across all components when devices disconnect
 
 #### 🛡️ Device Validation Pipeline
-- **Security Dialogs**: Added user approval dialogs when mobile devices request workspace access
-- **Real-time Notifications**: Implemented WebSocket notifications for validation requests from mobile devices
+- **Security Notifications**: User approval notifications when mobile devices request workspace access
+- **Real-time Communication**: WebSocket notifications for validation requests from mobile devices
 - **User Authorization**: VS Code users must explicitly approve each new mobile device connection
 - **Validation Endpoints**: Complete API integration for device validation pipeline (`/api/v1/validation/*`)
 - **Rate Limiting**: Protection against validation spam with IP-based rate limiting (3 requests per hour)
 - **Request Expiration**: Validation requests automatically expire after 5 minutes for security
 
-#### 🔒 Security Enhancements
+#### 🔒 Security & Authentication
 - **Explicit Approval Required**: No mobile device can access workspace without user consent
-- **Device Information Display**: Approval dialogs show device name, platform, IP address, and timestamp
+- **Enhanced Device Information**: Approval notifications show friendly device names and platform information
 - **Authentication Token Generation**: Secure tokens only generated after explicit user approval
 - **WebSocket Security**: Enhanced WebSocket communication with validation pipeline integration
 - **API Security**: Device validation integrated with existing authentication and subscription systems
 
-#### 📖 Documentation Updates
+#### �️ Technical Improvements
+- **Notification System**: Migrated from modal dialogs to VS Code's standard notification system
+- **WebSocket Enhancement**: Improved message handling and validation request detection
+- **Cleanup Architecture**: Comprehensive disconnect notification system across all components
+- **Error Handling**: Enhanced error handling with user-friendly messaging and emoji indicators
+- **State Management**: Better authentication state persistence after validation approval
+
+#### 📖 Documentation & Developer Experience
 - **Setup Guide Updates**: All setup guides now include validation approval step
 - **Troubleshooting**: Added device validation troubleshooting section
-- **API Documentation**: Complete validation endpoint documentation with examples
-- **Security Section**: Enhanced security documentation explaining validation process
+- **API Documentation**: Complete validation and disconnect endpoint documentation with examples
+- **Security Section**: Enhanced security documentation explaining validation and cleanup processes
+- **UX Guidelines**: Updated documentation reflecting the improved notification-based approval system
 
 ## [1.2.3] - 2025-09-13
 

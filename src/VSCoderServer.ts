@@ -3464,27 +3464,51 @@ export class VSCoderServer {
             
             const { validation_id, device_name, platform, version, ip_address, requested_at, expires_at } = data;
             
-            // Show VS Code dialog asking user to approve the device
-            const approveButton = 'Approve Device';
-            const denyButton = 'Deny Access';
+            // Show VS Code notification (non-modal) asking user to approve the device
+            const approveButton = 'Approve';
+            const denyButton = 'Deny';
+            const detailsButton = 'Details';
+            
+            // Create a friendly notification message
+            const deviceInfo = `${device_name} (${platform})`;
+            const message = `📱 Mobile device "${deviceInfo}" wants to connect`;
+            
             const result = await vscode.window.showInformationMessage(
-                `Mobile device "${device_name}" (${platform} ${version}) wants to connect to VS Code.\n\nIP: ${ip_address}\nRequested at: ${new Date(requested_at).toLocaleString()}`,
-                {
-                    modal: true,
-                    detail: 'This device will have access to your VS Code workspace, files, and Copilot chat. Only approve devices you trust.'
-                },
+                message,
                 approveButton,
-                denyButton
+                denyButton,
+                detailsButton
             );
             
             if (result === approveButton) {
                 console.log('✅ User approved device validation request');
                 // Call API to approve the validation
                 await this.approveValidationRequest(validation_id);
-            } else {
+            } else if (result === denyButton) {
                 console.log('❌ User denied device validation request');
+                vscode.window.showInformationMessage('🚫 Device access denied');
                 // Validation request will automatically expire, no need to explicitly deny
+            } else if (result === detailsButton) {
+                console.log('ℹ️ User requested device details');
+                // Show detailed information in a more user-friendly way
+                const detailMessage = `Device Details:\n\n📱 Name: ${device_name}\n🖥️ Platform: ${platform} ${version}\n🌐 IP Address: ${ip_address}\n⏰ Requested: ${new Date(requested_at).toLocaleString()}\n⏳ Expires: ${new Date(expires_at).toLocaleString()}\n\nThis device will have access to your VS Code workspace, files, and Copilot chat. Only approve devices you trust.`;
+                
+                const detailResult = await vscode.window.showInformationMessage(
+                    detailMessage,
+                    { modal: false }, // Keep it non-modal
+                    approveButton,
+                    denyButton
+                );
+                
+                if (detailResult === approveButton) {
+                    console.log('✅ User approved device validation request after viewing details');
+                    await this.approveValidationRequest(validation_id);
+                } else if (detailResult === denyButton) {
+                    console.log('❌ User denied device validation request after viewing details');
+                    vscode.window.showInformationMessage('🚫 Device access denied');
+                }
             }
+            // If user dismisses notification (no result), validation will expire automatically
         } catch (error) {
             console.error('❌ Error handling validation request:', error);
         }
@@ -3507,15 +3531,11 @@ export class VSCoderServer {
                 const authToken = result.data?.auth_token;
                 const expiresAt = result.data?.expires_at;
                 
-                let message = 'Mobile device access approved successfully!';
-                if (authToken) {
-                    message += ` Auth token generated (expires: ${expiresAt ? new Date(expiresAt).toLocaleString() : 'N/A'})`;
-                }
-                
-                vscode.window.showInformationMessage(message);
+                // Show a clean success notification
+                vscode.window.showInformationMessage('✅ Mobile device connected successfully!');
             } else {
                 console.error('❌ Failed to approve validation:', result.error);
-                vscode.window.showErrorMessage(`Failed to approve device access: ${result.error || 'Unknown error'}`);
+                vscode.window.showErrorMessage(`❌ Failed to approve device: ${result.error || 'Unknown error'}`);
             }
         } catch (error) {
             console.error('❌ Error approving validation request:', error);
