@@ -52,6 +52,16 @@ export class VSCoderServer {
     private chatSyncTimeout: NodeJS.Timeout | null = null;
     private isChatSyncActive: boolean = false;
 
+    // Terminal Sync Management
+    private isTerminalSyncActive: boolean = false;
+
+    // Sync Mutex - only one sync type can be active at a time
+    private activeSyncType: 'chat' | 'terminal' | null = null;
+
+    // Health check and cleanup intervals
+    private webSocketHealthCheckInterval: NodeJS.Timeout | null = null;
+    private sessionCleanupTimeout: NodeJS.Timeout | null = null;
+
     constructor(port: number, copilotBridge: CopilotBridge) {
         console.log('🌐 VSCoderServer constructor called with port:', port);
         
@@ -172,8 +182,13 @@ export class VSCoderServer {
         this.messageSequence = 0; // Reset sequence counter
         console.log('🔄 Started new session:', this.currentSessionId);
         
+        // Clear any existing cleanup timeout
+        if (this.sessionCleanupTimeout) {
+            clearTimeout(this.sessionCleanupTimeout);
+        }
+        
         // Set up automatic cleanup to prevent memory leaks
-        setTimeout(() => {
+        this.sessionCleanupTimeout = setTimeout(() => {
             if (this.sentMessages.size > 100) {
                 console.log('🧹 Cleaning up old messages to prevent memory leaks');
                 const messagesArray = Array.from(this.sentMessages);
@@ -291,6 +306,66 @@ export class VSCoderServer {
     private handleWebSocketMessage(message: WebSocketMessage): void {
         console.log('📨 Received WebSocket message from Discovery API:', message.type, message.id);
         console.log('📨 Full WebSocket message:', JSON.stringify(message, null, 2));
+
+        // 🔍 COMPREHENSIVE DEBUG: Check ALL possible validation message patterns
+        console.log('🔍 VALIDATION DEBUG - Checking message for validation patterns:');
+        console.log('🔍 - message.type:', message.type);
+        console.log('🔍 - message.data?.type:', message.data?.type);
+        console.log('🔍 - message.data?.validation_id:', message.data?.validation_id);
+        console.log('🔍 - message.validation_id:', (message as any).validation_id);
+        console.log('🔍 - Contains "validation":', JSON.stringify(message).toLowerCase().includes('validation'));
+        console.log('🔍 - Contains "device":', JSON.stringify(message).toLowerCase().includes('device'));
+        console.log('🔍 - Contains "approve":', JSON.stringify(message).toLowerCase().includes('approve'));
+        console.log('🔍 - Has validation_request type:', message.type === 'notification' && message.data?.type === 'validation_request');
+        console.log('🔍 - Has validation_id:', message.type === 'notification' && message.data?.validation_id);
+
+        // 🔍 SEARCH FOR ANY VALIDATION-RELATED CONTENT
+        const messageStr = JSON.stringify(message).toLowerCase();
+        if (messageStr.includes('validation') || messageStr.includes('approve') || messageStr.includes('device') || messageStr.includes('pairing')) {
+            console.log('🔥 POTENTIAL VALIDATION MESSAGE DETECTED!');
+            console.log('🔥 This message contains validation-related keywords');
+            console.log('🔥 Full message analysis:', {
+                hasValidation: messageStr.includes('validation'),
+                hasApprove: messageStr.includes('approve'),
+                hasDevice: messageStr.includes('device'),
+                hasPairing: messageStr.includes('pairing'),
+                messageType: message.type,
+                dataStructure: Object.keys(message.data || {})
+            });
+        }
+
+        // Handle validation requests from mobile devices
+        if (message.type === 'notification' && message.data?.type === 'validation_request') {
+            console.log('🔐 VALIDATION DETECTION - Received validation request from mobile device');
+            console.log('🔐 VALIDATION DETECTION - Data:', JSON.stringify(message.data, null, 2));
+            this.handleValidationRequest(message.data);
+            return;
+        }
+
+        // Handle other validation-related notifications
+        if (message.type === 'notification' && message.data?.validation_id) {
+            console.log('📱 VALIDATION DETECTION - Received validation notification from Discovery API');
+            console.log('📱 VALIDATION DETECTION - Data:', JSON.stringify(message.data, null, 2));
+            this.handleValidationRequest(message.data);
+            return;
+        }
+
+        // 🔍 CATCH ANY VALIDATION MESSAGE WITH DIFFERENT STRUCTURE
+        if ((message as any).validation_id || (message.data && JSON.stringify(message.data).toLowerCase().includes('validation'))) {
+            console.log('🚨 ALTERNATIVE VALIDATION FORMAT DETECTED!');
+            console.log('🚨 This might be a validation request with different structure');
+            console.log('🚨 Attempting to handle as validation request...');
+            this.handleValidationRequest(message.data || message);
+            return;
+        }
+
+        // 🔍 ENHANCED DEBUG: Log when no validation patterns match
+        if (message.type === 'notification') {
+            console.log('⚠️ VALIDATION DEBUG - Received notification but no validation patterns matched');
+            console.log('⚠️ VALIDATION DEBUG - This might be a validation request with different structure');
+            console.log('⚠️ VALIDATION DEBUG - Message keys:', Object.keys(message));
+            console.log('⚠️ VALIDATION DEBUG - Data keys:', message.data ? Object.keys(message.data) : 'no data');
+        }
 
         // Fix: Check for command in data.command (mobile app format) or message.command (legacy format)
         const commandName = message.data?.command || message.command;
@@ -974,9 +1049,14 @@ export class VSCoderServer {
         try {
             console.log('🎯 Processing Copilot chat request via command:', { prompt: prompt?.substring(0, 100), mode, agentMode });
             
-            // Only start new session if we don't have one yet
-            if (!this.currentSessionId) {
+            // Only start new session if explicitly requested via mode parameter
+            // This prevents automatic new session creation on first message after pairing
+            if (!this.currentSessionId && mode === 'new-session') {
                 this.startNewSession();
+            } else if (!this.currentSessionId) {
+                // Create a session ID without clearing existing chat state
+                this.currentSessionId = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+                console.log('🔄 Created session ID for existing chat:', this.currentSessionId);
             }
             const messageId = this.generateMessageId();
             
@@ -1283,8 +1363,13 @@ export class VSCoderServer {
      * Start WebSocket health monitoring to ensure connection stays active
      */
     private startWebSocketHealthCheck(): void {
+        // Clear any existing health check interval
+        if (this.webSocketHealthCheckInterval) {
+            clearInterval(this.webSocketHealthCheckInterval);
+        }
+        
         // Check WebSocket health every 30 seconds
-        setInterval(async () => {
+        this.webSocketHealthCheckInterval = setInterval(async () => {
             if (!this.discoveryWebSocket.isWebSocketConnected()) {
                 console.log('💓 WebSocket health check: Connection lost, attempting to reconnect...');
                 try {
@@ -1300,52 +1385,48 @@ export class VSCoderServer {
     }
 
     public async stop(): Promise<void> {
-        console.log('🛑 Stopping VSCoder WebSocket communication...');
+        // Clean up health check interval
+        if (this.webSocketHealthCheckInterval) {
+            clearInterval(this.webSocketHealthCheckInterval);
+            this.webSocketHealthCheckInterval = null;
+        }
+        
+        // Clean up session cleanup timeout
+        if (this.sessionCleanupTimeout) {
+            clearTimeout(this.sessionCleanupTimeout);
+            this.sessionCleanupTimeout = null;
+        }
         
         // Clean up chat sync monitoring
-        console.log('💬 Cleaning up chat sync monitoring...');
         this.stopChatSyncMonitoring();
-        console.log('✅ Chat sync monitoring cleaned up');
         
         // Clean up terminal sessions
-        console.log('🖥️ Cleaning up terminal sessions...');
-        
         // Stop all terminal output monitoring first
         this.stopAllTerminalSyncMonitoring();
         
         this.terminalSessions.forEach((session, sessionId) => {
-            console.log('🗑️ Disposing terminal session:', sessionId);
             session.terminal.dispose();
         });
         this.terminalSessions.clear();
         this.terminalHistory.clear();
-        console.log('✅ Terminal sessions cleaned up');
         
         // Stop WebSocket connection to Discovery API
         if (this.discoveryWebSocket) {
-            console.log('🔌 Disconnecting from Discovery API WebSocket...');
             this.discoveryWebSocket.disconnect();
-            console.log('✅ Discovery API WebSocket disconnected');
         }
         
         // Stop API message polling (fallback, should not be used with WebSocket)
         if (this.messagePollingDisposable) {
-            console.log('📡 Stopping API message polling...');
             this.messagePollingDisposable.dispose();
             this.messagePollingDisposable = null;
-            console.log('✅ API message polling stopped');
         }
         
         // Unregister from discovery service
         try {
-            console.log('🔐 Unregistering from discovery service...');
             await this.discoveryService.unregister();
-            console.log('✅ Discovery service unregistration completed');
         } catch (error) {
-            console.warn('⚠️ Discovery service unregistration failed:', error);
+            // Silent fail
         }
-
-        console.log('✅ VSCoder WebSocket communication stopped completely');
     }
 
     public getPort(): number {
@@ -1353,7 +1434,16 @@ export class VSCoderServer {
     }
 
     public getPairingCode(): string | undefined {
-        return this.discoveryService.getPairingCode();
+        const currentPairingCode = this.discoveryService.getPairingCode();
+        console.log('🔍 DEBUG getPairingCode() called:');
+        console.log('🔍 - Current pairing code from discovery service:', currentPairingCode);
+        
+        // Also check VS Code configuration
+        const config = vscode.workspace.getConfiguration('vscoder');
+        const configPairingCode = config.get<string>('pairingCode');
+        console.log('🔍 - Pairing code from VS Code config:', configPairingCode);
+        
+        return currentPairingCode;
     }
 
     public getDiscoveryService(): DiscoveryService {
@@ -3134,11 +3224,20 @@ export class VSCoderServer {
      * Start terminal sync monitoring that auto-stops after 30 seconds
      */
     private startTerminalSyncMonitoring(sessionId: string): void {
+        // Check if chat sync is active - if so, stop it first
+        if (this.activeSyncType === 'chat') {
+            console.log('⚠️ Chat sync is active, stopping chat sync to start terminal sync');
+            this.stopChatSyncMonitoring();
+        }
+        
         // Stop any existing monitoring for this session
         this.stopTerminalSyncMonitoring(sessionId);
         
         console.log(`🖥️ Starting request-based terminal sync monitoring for session: ${sessionId}`);
         
+        // Set active sync type and enable terminal sync
+        this.activeSyncType = 'terminal';
+        this.isTerminalSyncActive = true;
         // Monitor terminal output every 2 seconds
         const monitoringInterval = setInterval(async () => {
             try {
@@ -3219,6 +3318,15 @@ export class VSCoderServer {
         
         if (interval || timeout) {
             console.log(`⏹️ Stopped terminal sync monitoring for session: ${sessionId}`);
+            
+            // Check if this was the last terminal session - if so, clear mutex
+            if (this.terminalMonitoringIntervals.size === 0 && this.terminalSyncTimeouts.size === 0) {
+                this.isTerminalSyncActive = false;
+                if (this.activeSyncType === 'terminal') {
+                    this.activeSyncType = null;
+                    console.log('🔓 All terminal sessions stopped - sync mutex cleared');
+                }
+            }
         }
     }
     
@@ -3273,10 +3381,17 @@ export class VSCoderServer {
     private startChatSyncMonitoring(): void {
         console.log('🔄 Starting chat sync monitoring...');
         
+        // Check if terminal sync is active - if so, stop it first
+        if (this.activeSyncType === 'terminal') {
+            console.log('⚠️ Terminal sync is active, stopping terminal sync to start chat sync');
+            this.stopAllTerminalSyncMonitoring();
+        }
+        
         // Stop existing monitoring if any
         this.stopChatSyncMonitoring();
         
-        // Enable chat sync
+        // Set active sync type and enable chat sync
+        this.activeSyncType = 'chat';
         this.isChatSyncActive = true;
         console.log('✅ Chat sync monitoring is now ACTIVE');
         
@@ -3302,6 +3417,12 @@ export class VSCoderServer {
             this.isChatSyncActive = false;
             console.log('⏹️ Chat sync monitoring is now INACTIVE');
         }
+        
+        // Clear sync mutex if this was the active sync type
+        if (this.activeSyncType === 'chat') {
+            this.activeSyncType = null;
+            console.log('🔓 Sync mutex cleared - other sync types can now start');
+        }
     }
     
     /**
@@ -3323,5 +3444,135 @@ export class VSCoderServer {
             console.log(`⏹️ Stopped timeout for session: ${sessionId}`);
         });
         this.terminalSyncTimeouts.clear();
+        
+        // Update sync state
+        this.isTerminalSyncActive = false;
+        if (this.activeSyncType === 'terminal') {
+            this.activeSyncType = null;
+        }
+        
+        console.log('✅ All terminal sync monitoring stopped');
+    }
+
+    /**
+     * Handle validation request from mobile device
+     */
+    private async handleValidationRequest(data: any): Promise<void> {
+        try {
+            console.log('🔐 VALIDATION REQUEST RECEIVED - Processing validation request:', data);
+            console.log('🔐 VALIDATION DEBUG - Full data object:', JSON.stringify(data, null, 2));
+            
+            const { validation_id, device_name, platform, version, ip_address, requested_at, expires_at } = data;
+            
+            // Show VS Code dialog asking user to approve the device
+            const approveButton = 'Approve Device';
+            const denyButton = 'Deny Access';
+            const result = await vscode.window.showInformationMessage(
+                `Mobile device "${device_name}" (${platform} ${version}) wants to connect to VS Code.\n\nIP: ${ip_address}\nRequested at: ${new Date(requested_at).toLocaleString()}`,
+                {
+                    modal: true,
+                    detail: 'This device will have access to your VS Code workspace, files, and Copilot chat. Only approve devices you trust.'
+                },
+                approveButton,
+                denyButton
+            );
+            
+            if (result === approveButton) {
+                console.log('✅ User approved device validation request');
+                // Call API to approve the validation
+                await this.approveValidationRequest(validation_id);
+            } else {
+                console.log('❌ User denied device validation request');
+                // Validation request will automatically expire, no need to explicitly deny
+            }
+        } catch (error) {
+            console.error('❌ Error handling validation request:', error);
+        }
+    }
+
+    /**
+     * Approve validation request via API
+     */
+    private async approveValidationRequest(validationId: string): Promise<void> {
+        try {
+            console.log('📡 Calling API to approve validation:', validationId);
+            
+            // Use ApiClient instead of direct fetch
+            const result = await this.apiClient.approveValidation(validationId);
+            
+            if (result.success) {
+                console.log('✅ Validation approved successfully:', result.data);
+                
+                // Extract auth token from response if available
+                const authToken = result.data?.auth_token;
+                const expiresAt = result.data?.expires_at;
+                
+                let message = 'Mobile device access approved successfully!';
+                if (authToken) {
+                    message += ` Auth token generated (expires: ${expiresAt ? new Date(expiresAt).toLocaleString() : 'N/A'})`;
+                }
+                
+                vscode.window.showInformationMessage(message);
+            } else {
+                console.error('❌ Failed to approve validation:', result.error);
+                vscode.window.showErrorMessage(`Failed to approve device access: ${result.error || 'Unknown error'}`);
+            }
+        } catch (error) {
+            console.error('❌ Error approving validation request:', error);
+            vscode.window.showErrorMessage('Error approving device access. Please try again.');
+        }
+    }
+
+    /**
+     * Check validation request status
+     */
+    async checkValidationStatus(validationId: string): Promise<any> {
+        try {
+            console.log('🔍 Checking validation status:', validationId);
+            const result = await this.apiClient.checkValidationStatus(validationId);
+            
+            if (result.success) {
+                console.log('✅ Validation status retrieved:', result.data);
+                return result.data;
+            } else {
+                console.error('❌ Failed to get validation status:', result.error);
+                return null;
+            }
+        } catch (error) {
+            console.error('❌ Error checking validation status:', error);
+            return null;
+        }
+    }
+
+    /**
+     * Request validation for device pairing (primarily for testing/debugging)
+     */
+    async requestValidation(pairingCode: string, deviceInfo: any): Promise<any> {
+        try {
+            console.log('📱 Requesting validation for pairing code:', pairingCode);
+            const result = await this.apiClient.requestValidation(pairingCode, deviceInfo);
+            
+            if (result.success) {
+                console.log('✅ Validation request sent:', result.data);
+                return result.data;
+            } else {
+                console.error('❌ Failed to request validation:', result.error);
+                return null;
+            }
+        } catch (error) {
+            console.error('❌ Error requesting validation:', error);
+            return null;
+        }
+    }
+
+    /**
+     * Get validation pipeline status and statistics
+     */
+    getValidationPipelineStatus(): { available: boolean; apiConnected: boolean; authenticated: boolean } {
+        return {
+            available: true,
+            apiConnected: !!this.apiClient,
+            authenticated: !!this.discoveryService?.getDeviceToken()
+        };
     }
 }

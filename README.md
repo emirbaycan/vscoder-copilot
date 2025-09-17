@@ -23,10 +23,15 @@ Transform your smartphone into an intelligent coding companion! VSCoder brings G
 4. **Install mobile app** and enter the code
 5. **Start coding** - AI-powered development ready!
 
-**� Enterprise Security**
+**🔐 Enterprise Security**
 - Your code never leaves your devices
 - Encrypted end-to-end communication
 - Pairing codes expire every 10 minutes for security
+- **Device Validation Pipeline**: VS Code shows security dialogs when mobile devices request access
+- **User Authorization Required**: You must explicitly approve each device connection attempt
+- **Device Information Display**: See device name, platform, and IP address before approving
+- **Granular Access Control**: Approve or deny device access on a per-device basis
+- **Session Management**: Approved devices receive secure authentication tokens for ongoing access
 
 > **💡 Use Case**: Review pull requests on your commute, fix bugs from the coffee shop, or get AI coding help while away from your desk!
 
@@ -78,7 +83,10 @@ Transform your smartphone into an intelligent coding companion! VSCoder brings G
 - **App Store**: Search "VSCoder Copilot" (iOS version)
 - **Open app** → **Settings** → **Profiles** → **"Pair with VS Code"**
 - **Enter the 6-digit code** from step 3
-- **Connection established** automatically - works across any network!
+- **⚠️ SECURITY VALIDATION**: When the mobile device requests access, VS Code will show a security dialog with device information (name, platform, IP address)
+- **⚡ USER APPROVAL REQUIRED**: Click "Approve Device" in VS Code to grant the mobile device access to your workspace
+- **🔐 SECURITY NOTE**: Only approve devices you trust - this grants access to your VS Code workspace and files
+- **Connection established** automatically after approval - works across any network!
 
 ### Step 5: Start AI-Powered Coding! 🎉
 - **Browse files** on mobile from your VS Code workspace
@@ -1094,6 +1102,32 @@ This tool will:
 4. **Restart**: `VSCoder: Start VSCoder Server`
 
 #### 📱 "Mobile App Can't Connect"
+
+**What you see**: Connection timeouts or authentication errors
+**Quick fix**:
+1. Check if VS Code server is running: Look for `📱 123456` in status bar
+2. Get fresh pairing code: `VSCoder: Show Pairing Code`
+3. Make sure both devices have internet access
+4. Try `VSCoder: Troubleshoot Mobile App Connection`
+
+#### 🔐 "Device Validation Not Working"
+
+**What you see**: Mobile app stays on "Connecting..." or shows validation errors
+**Quick fix**:
+1. **Check VS Code**: Look for a security dialog asking to approve the device
+2. **If no dialog appears**: Run `VSCoder: Show Status` to check WebSocket connection
+3. **Click "Approve Device"** when the dialog appears
+4. **If dialog was missed**: Mobile app will timeout, try connecting again
+5. **Check firewall**: Ensure VS Code can receive WebSocket notifications
+
+#### ⏰ "Validation Request Expired"
+
+**What you see**: "Validation request expired" error in mobile app
+**Quick fix**:
+1. **Wait 5 minutes** for the previous request to fully expire
+2. **Get fresh pairing code**: Run `VSCoder: Show Pairing Code` 
+3. **Try connecting again** - VS Code will show a new approval dialog
+4. **Approve quickly** - Validation requests expire after 5 minutes for security
 
 **What you see**: Mobile app says "connection failed" or "server not found"
 **Quick fix**:

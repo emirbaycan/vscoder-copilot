@@ -2,6 +2,31 @@
 
 All notable changes to the "VSCoder Copilot" extension will be documented in this file.
 
+## [1.2.4] - 2025-09-17
+
+### 🔐 Enhanced Security & Device Validation
+
+#### 🛡️ Device Validation Pipeline
+- **Security Dialogs**: Added user approval dialogs when mobile devices request workspace access
+- **Real-time Notifications**: Implemented WebSocket notifications for validation requests from mobile devices
+- **User Authorization**: VS Code users must explicitly approve each new mobile device connection
+- **Validation Endpoints**: Complete API integration for device validation pipeline (`/api/v1/validation/*`)
+- **Rate Limiting**: Protection against validation spam with IP-based rate limiting (3 requests per hour)
+- **Request Expiration**: Validation requests automatically expire after 5 minutes for security
+
+#### 🔒 Security Enhancements
+- **Explicit Approval Required**: No mobile device can access workspace without user consent
+- **Device Information Display**: Approval dialogs show device name, platform, IP address, and timestamp
+- **Authentication Token Generation**: Secure tokens only generated after explicit user approval
+- **WebSocket Security**: Enhanced WebSocket communication with validation pipeline integration
+- **API Security**: Device validation integrated with existing authentication and subscription systems
+
+#### 📖 Documentation Updates
+- **Setup Guide Updates**: All setup guides now include validation approval step
+- **Troubleshooting**: Added device validation troubleshooting section
+- **API Documentation**: Complete validation endpoint documentation with examples
+- **Security Section**: Enhanced security documentation explaining validation process
+
 ## [1.2.3] - 2025-09-13
 
 ### 🔧 Stability & Reliability Improvements

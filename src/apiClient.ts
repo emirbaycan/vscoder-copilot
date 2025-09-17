@@ -16,6 +16,36 @@ export interface ApiResponse<T = any> {
     code?: string;
 }
 
+// ====== VALIDATION INTERFACES ======
+
+export interface ValidationRequest {
+    pairing_code: string;
+    device_name: string;
+    platform: string;
+    version: string;
+    ip_address?: string;
+}
+
+export interface ValidationResponse {
+    success: boolean;
+    validation_id?: string;
+    status?: 'pending' | 'approved' | 'rejected' | 'expired';
+    message?: string;
+    auth_token?: string;
+    expires_at?: string;
+    error?: string;
+    code?: string;
+}
+
+export interface ValidationStatusResponse {
+    success: boolean;
+    validation_id: string;
+    status: 'pending' | 'approved' | 'rejected' | 'expired';
+    message: string;
+    expires_at: string;
+    auth_token?: string;
+}
+
 export class ApiClient {
     private apiUrl: string;
     private pairingCode: string | null = null;
@@ -111,17 +141,19 @@ export class ApiClient {
         }
 
         try {
-            // Format message according to API specification
+            // Format message according to API specification - INCLUDES pairing_code for security validation
             const messagePayload = {
-                target_pairing_code: this.pairingCode,
-                type: message.type || 'response',
-                command: message.data?.command || 'vscode_response',
-                data: {
+                pairing_code: this.pairingCode,  // ✅ REQUIRED: Pairing code for security validation
+                sender: 'vscode',               // ✅ REQUIRED: Sender identification
+                message: {
+                    type: message.type || 'response',
                     content: message.content,
-                    success: true,
-                    timestamp: new Date().toISOString(),
-                    sender: 'vscode',
-                    ...message.data
+                    data: {
+                        success: true,
+                        timestamp: new Date().toISOString(),
+                        command: message.data?.command || 'vscode_response',
+                        ...message.data
+                    }
                 }
             };
 
@@ -324,6 +356,133 @@ export class ApiClient {
         } catch (error) {
             console.error('❌ API connection test failed:', error);
             return false;
+        }
+    }
+
+    // ====== VALIDATION PIPELINE METHODS ======
+
+    /**
+     * Approve a validation request from mobile device
+     */
+    async approveValidation(validationId: string): Promise<ApiResponse> {
+        try {
+            console.log('🔐 Approving validation request:', validationId);
+            
+            const deviceToken = this.discoveryService?.getDeviceToken();
+            if (!deviceToken) {
+                throw new Error('No device token available for authentication');
+            }
+
+            const response = await this.fetchWithTimeout(`${this.apiUrl}/api/v1/validation/approve/${validationId}`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${deviceToken}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+
+            const result = await response.json();
+            
+            if (response.ok) {
+                console.log('✅ Validation approved successfully:', result);
+                return {
+                    success: true,
+                    data: result,
+                    message: 'Device validation approved successfully'
+                };
+            } else {
+                console.error('❌ Failed to approve validation:', response.status, result);
+                return {
+                    success: false,
+                    error: result.error || 'Failed to approve validation',
+                    code: result.code || 'APPROVAL_FAILED'
+                };
+            }
+        } catch (error) {
+            console.error('❌ Error approving validation:', error);
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : 'Network error during validation approval'
+            };
+        }
+    }
+
+    /**
+     * Check validation status
+     */
+    async checkValidationStatus(validationId: string): Promise<ApiResponse> {
+        try {
+            console.log('🔍 Checking validation status:', validationId);
+            
+            const response = await this.fetchWithTimeout(`${this.apiUrl}/api/v1/validation/status/${validationId}`);
+            const result = await response.json();
+            
+            if (response.ok) {
+                console.log('✅ Validation status retrieved:', result);
+                return {
+                    success: true,
+                    data: result
+                };
+            } else {
+                console.error('❌ Failed to get validation status:', response.status, result);
+                return {
+                    success: false,
+                    error: result.error || 'Failed to get validation status',
+                    code: result.code || 'STATUS_CHECK_FAILED'
+                };
+            }
+        } catch (error) {
+            console.error('❌ Error checking validation status:', error);
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : 'Network error during validation status check'
+            };
+        }
+    }
+
+    /**
+     * Request validation for device pairing (used by mobile devices)
+     */
+    async requestValidation(pairingCode: string, deviceInfo: any): Promise<ApiResponse> {
+        try {
+            console.log('📱 Requesting device validation for pairing code:', pairingCode);
+            
+            const response = await this.fetchWithTimeout(`${this.apiUrl}/api/v1/validation/request`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    pairing_code: pairingCode,
+                    device_name: deviceInfo.name || 'Unknown Device',
+                    platform: deviceInfo.platform || 'mobile',
+                    version: deviceInfo.version || '1.0.0'
+                })
+            });
+
+            const result = await response.json();
+            
+            if (response.ok) {
+                console.log('✅ Validation request sent successfully:', result);
+                return {
+                    success: true,
+                    data: result,
+                    message: 'Validation request sent to VS Code extension'
+                };
+            } else {
+                console.error('❌ Failed to request validation:', response.status, result);
+                return {
+                    success: false,
+                    error: result.error || 'Failed to request validation',
+                    code: result.code || 'REQUEST_FAILED'
+                };
+            }
+        } catch (error) {
+            console.error('❌ Error requesting validation:', error);
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : 'Network error during validation request'
+            };
         }
     }
 }

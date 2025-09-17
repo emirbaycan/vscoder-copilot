@@ -135,16 +135,26 @@ export function activate(context: vscode.ExtensionContext) {
     function stopServer(): void {
         if (!server) {
             console.log('⚠️ No server running');
+            vscode.window.showWarningMessage('VSCoder server is not running');
             return;
         }
 
-        console.log('🔌 Stopping server...');
-        server.stop();
-        server = undefined;
-        console.log('✅ Server stopped successfully');
+        console.log('🔌 Stopping VSCoder server and all active processes...');
         
-        // Update status bar
-        updatePairingCodeStatusBar();
+        try {
+            // Stop the server which should also stop all sync monitoring
+            server.stop();
+            server = undefined;
+            
+            // Show comprehensive feedback to user
+            vscode.window.showInformationMessage('✅ VSCoder server stopped - All sync processes halted');
+            
+            // Update status bar
+            updatePairingCodeStatusBar();
+        } catch (error) {
+            console.error('❌ Error stopping server:', error);
+            vscode.window.showErrorMessage(`Failed to stop VSCoder server: ${error}`);
+        }
     }
 
     // Helper function to handle workspace trust and auto-start
@@ -284,13 +294,47 @@ export function activate(context: vscode.ExtensionContext) {
         });
         console.log('✅ troubleshootMobileCommand registered');
 
+        // Test validation request command (for debugging)
+        const testValidationCommand = vscode.commands.registerCommand('vscoder.testValidation', async () => {
+            console.log('🧪 Test validation command triggered');
+            
+            if (!server) {
+                vscode.window.showErrorMessage('Server not running. Please start the server first.');
+                return;
+            }
+
+            // Create a fake validation request to test the notification system
+            const fakeValidationData = {
+                validation_id: `test_val_${Date.now()}`,
+                device_name: 'Test Mobile Device',
+                platform: 'iOS',
+                version: '17.0',
+                ip_address: '192.168.1.100',
+                requested_at: new Date().toISOString(),
+                expires_at: new Date(Date.now() + 5 * 60 * 1000).toISOString() // 5 minutes from now
+            };
+
+            console.log('🧪 Triggering fake validation request:', fakeValidationData);
+            
+            // Call the validation handler directly to test it
+            try {
+                await (server as any).handleValidationRequest(fakeValidationData);
+                console.log('✅ Test validation completed');
+            } catch (error) {
+                console.error('❌ Test validation failed:', error);
+                vscode.window.showErrorMessage(`Test validation failed: ${error}`);
+            }
+        });
+        console.log('✅ testValidationCommand registered');
+
         // Register essential commands only
         console.log('📋 Registering essential commands...');
         const commands = [
             startServerCommand,
             stopServerCommand,
             showPairingCodeCommand,
-            troubleshootMobileCommand
+            troubleshootMobileCommand,
+            testValidationCommand
         ];
         
         context.subscriptions.push(...commands);
@@ -315,14 +359,19 @@ export function activate(context: vscode.ExtensionContext) {
     }
 }
 
-export function deactivate() {
+export async function deactivate() {
     console.log('🔻 VSCoder extension deactivation started');
     
     if (server) {
         console.log('🛑 Stopping server during deactivation...');
-        server.stop();
-        server = undefined;
-        console.log('✅ Server stopped during deactivation');
+        try {
+            await server.stop();
+            server = undefined;
+            console.log('✅ Server stopped during deactivation');
+        } catch (error) {
+            console.error('❌ Error stopping server during deactivation:', error);
+            server = undefined;
+        }
     } else {
         console.log('ℹ️ No server to stop during deactivation');
     }

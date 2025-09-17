@@ -2,7 +2,7 @@
   "name": "vscoder-copilot",
   "displayName": "VSCoder Copilot",
   "description": "AI-powered mobile development with GitHub Copilot integration, cross-network device pairing, and real-time collaboration",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "publisher": "emirbaycan",
   "license": "MIT",
   "icon": "logo.png",
@@ -65,6 +65,11 @@
         "command": "vscoder.troubleshootMobile",
         "title": "Troubleshoot Mobile App Connection",
         "category": "VSCoder"
+      },
+      {
+        "command": "vscoder.testValidation",
+        "title": "Test Validation Request (Debug)",
+        "category": "VSCoder"
       }
     ],
     "menus": {
@@ -83,6 +88,10 @@
         },
         {
           "command": "vscoder.troubleshootMobile",
+          "when": "true"
+        },
+        {
+          "command": "vscoder.testValidation",
           "when": "true"
         }
       ]

@@ -517,6 +517,11 @@ export class DiscoveryService {
         const deviceToken = config.get<string>('deviceToken'); // Don't use - force fresh auth
         const pairingCode = config.get<string>('pairingCode');
 
+        console.log('🔍 DEBUG DiscoveryService.fromConfig():');
+        console.log('🔍 - API URL:', apiUrl);
+        console.log('🔍 - Device Token from config:', deviceToken ? 'EXISTS' : 'NONE');
+        console.log('🔍 - Pairing Code from config:', pairingCode);
+
         // Clear any stored device token to force fresh authentication and avoid 401 errors
         if (deviceToken) {
             console.log('🧹 Clearing stored device token from config to force fresh authentication');
