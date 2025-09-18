@@ -2,6 +2,34 @@
 
 All notable changes to the "VSCoder Copilot" extension will be documented in this file.
 
+## [1.2.5] - 2025-09-18
+
+### 🚀 Mobile App Integration & API Server Improvements
+
+#### 📱 Enhanced Mobile Device Validation
+- **Improved Device Information Display**: Better device name, platform, and version information in validation notifications
+- **Robust Data Extraction**: Enhanced validation request handling with multiple fallback patterns for device data
+- **Enhanced Debugging**: Added comprehensive logging for validation request troubleshooting
+- **Production API Integration**: Seamless integration with `api.vscodercopilot.com.tr` for mobile device validation
+
+#### 🌐 API Server Rate Limiting Optimization
+- **Debugging Support**: Temporarily disabled aggressive rate limiting to resolve mobile connection issues
+- **Enhanced Connection Stability**: Mobile apps can now connect multiple times without being blocked
+- **Improved Logging**: Better API server monitoring and debugging capabilities
+- **Production Deployment**: Support for mobile app production builds with reliable connection handling
+
+#### 🔧 Extension Stability & Performance
+- **WebSocket Optimization**: Enhanced real-time communication reliability
+- **Error Handling**: Improved error recovery and connection resilience
+- **Production Ready**: Optimized for production mobile app deployments on Google Play Store
+- **Cross-Platform Support**: Enhanced compatibility with mobile app v1.0.4 production features
+
+#### 🛠️ Developer Experience
+- **Enhanced Documentation**: Updated validation pipeline documentation
+- **Better Error Messages**: More informative error messages for troubleshooting
+- **Production Testing**: Tested with live mobile app on Google Play Store
+- **API Compatibility**: Full compatibility with mobile app profile state management fixes
+
 ## [1.2.4] - 2025-09-18
 
 ### 🎨 Enhanced User Experience & Validation Flow

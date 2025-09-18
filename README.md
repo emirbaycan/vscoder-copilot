@@ -4,7 +4,7 @@ Transform your smartphone into an intelligent coding companion! VSCoder brings G
 
 **Perfect for:** Code reviews on commute • Quick fixes from anywhere • AI-assisted mobile coding • Remote development workflows
 
-> **🎉 Latest Update (v1.2.4)**: Enhanced user experience with clean notification-based validation instead of modal dialogs, plus complete disconnect cleanup system for better device management!
+> **🎉 Latest Update (v1.2.5)**: Enhanced mobile device validation with improved connection stability, production API integration, and optimized rate limiting for reliable mobile app connectivity!
 
 ## ✨ What Makes VSCoder Special
 
@@ -12,22 +12,26 @@ Transform your smartphone into an intelligent coding companion! VSCoder brings G
 - Connect your phone to VS Code across **any network** (home, office, mobile data)
 - No complex setup, firewalls, or port forwarding needed
 - Secure 6-digit pairing codes connect devices instantly
+- **NEW**: Production-ready mobile app available on Google Play Store
 
 **🤖 Full GitHub Copilot on Mobile**
 - Chat with AI using natural language: *"Create a login component with validation"*
 - Browse and edit your entire VS Code workspace from your phone
 - Real-time sync - your conversations appear everywhere instantly
+- **NEW**: Enhanced mobile device validation with improved connection reliability
 
 **⚡ Instant Setup (2 Minutes)**
 1. **Install** this extension from VS Code marketplace
 2. **Start** the server with one command (`VSCoder: Start Server`)  
 3. **Get pairing code** from VS Code status bar (6 digits)
-4. **Install mobile app** and enter the code
-5. **Start coding** - AI-powered development ready!
+4. **Install mobile app** from Google Play Store or development build
+5. **Approve device** when VS Code shows validation notification
+6. **Start coding** - AI-powered development ready!
 
 **🔐 Enterprise Security**
 - Your code never leaves your devices
 - Encrypted end-to-end communication
+- **NEW**: Enhanced device validation with user approval system
 - Pairing codes expire every 10 minutes for security
 - **Device Validation Pipeline**: VS Code shows user-friendly notification dialogs when mobile devices request access
 - **User Authorization Required**: You must explicitly approve each device connection attempt

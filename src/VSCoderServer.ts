@@ -3461,17 +3461,44 @@ export class VSCoderServer {
         try {
             console.log('🔐 VALIDATION REQUEST RECEIVED - Processing validation request:', data);
             console.log('🔐 VALIDATION DEBUG - Full data object:', JSON.stringify(data, null, 2));
+            console.log('🔐 VALIDATION DEBUG - Available keys:', Object.keys(data || {}));
             
-            const { validation_id, device_name, platform, version, ip_address, requested_at, expires_at } = data;
+            // Extract validation data with multiple fallback patterns
+            const validation_id = data.validation_id || data.validationId || data.id;
+            const device_name = data.device_name || data.deviceName || data.name || data.device || 'Unknown Device';
+            const platform = data.platform || data.device_platform || data.devicePlatform || data.os || 'Unknown Platform';
+            const version = data.version || data.device_version || data.deviceVersion || data.osVersion || '';
+            const ip_address = data.ip_address || data.ipAddress || data.ip || 'Unknown IP';
+            const requested_at = data.requested_at || data.requestedAt || data.timestamp || new Date().toISOString();
+            const expires_at = data.expires_at || data.expiresAt || data.expiry || new Date(Date.now() + 5 * 60 * 1000).toISOString();
+            
+            console.log('🔐 VALIDATION DEBUG - Extracted values:', {
+                validation_id,
+                device_name,
+                platform,
+                version,
+                ip_address,
+                requested_at,
+                expires_at
+            });
             
             // Show VS Code notification (non-modal) asking user to approve the device
             const approveButton = 'Approve';
             const denyButton = 'Deny';
             const detailsButton = 'Details';
             
-            // Create a friendly notification message
-            const deviceInfo = `${device_name} (${platform})`;
-            const message = `📱 Mobile device "${deviceInfo}" wants to connect`;
+            // Create a friendly notification message with proper fallbacks
+            const deviceInfo = device_name !== 'Unknown Device' && platform !== 'Unknown Platform' 
+                ? `${device_name} (${platform})`
+                : device_name !== 'Unknown Device' 
+                    ? device_name
+                    : platform !== 'Unknown Platform'
+                        ? `Mobile device (${platform})`
+                        : 'Mobile device';
+                        
+            const message = `📱 ${deviceInfo} wants to connect`;
+            
+            console.log('🔐 VALIDATION DEBUG - Showing notification:', message);
             
             const result = await vscode.window.showInformationMessage(
                 message,
@@ -3491,7 +3518,8 @@ export class VSCoderServer {
             } else if (result === detailsButton) {
                 console.log('ℹ️ User requested device details');
                 // Show detailed information in a more user-friendly way
-                const detailMessage = `Device Details:\n\n📱 Name: ${device_name}\n🖥️ Platform: ${platform} ${version}\n🌐 IP Address: ${ip_address}\n⏰ Requested: ${new Date(requested_at).toLocaleString()}\n⏳ Expires: ${new Date(expires_at).toLocaleString()}\n\nThis device will have access to your VS Code workspace, files, and Copilot chat. Only approve devices you trust.`;
+                const versionDisplay = version ? ` ${version}` : '';
+                const detailMessage = `Device Details:\n\n📱 Name: ${device_name}\n🖥️ Platform: ${platform}${versionDisplay}\n🌐 IP Address: ${ip_address}\n⏰ Requested: ${new Date(requested_at).toLocaleString()}\n⏳ Expires: ${new Date(expires_at).toLocaleString()}\n\nThis device will have access to your VS Code workspace, files, and Copilot chat. Only approve devices you trust.`;
                 
                 const detailResult = await vscode.window.showInformationMessage(
                     detailMessage,

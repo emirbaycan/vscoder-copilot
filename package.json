@@ -2,7 +2,7 @@
   "name": "vscoder-copilot",
   "displayName": "VSCoder Copilot",
   "description": "AI-powered mobile development with GitHub Copilot integration, cross-network device pairing, and real-time collaboration",
-  "version": "1.2.4",
+  "version": "1.2.5",
   "publisher": "emirbaycan",
   "license": "MIT",
   "icon": "logo.png",
