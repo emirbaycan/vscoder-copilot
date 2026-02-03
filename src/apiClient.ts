@@ -61,18 +61,8 @@ export class ApiClient {
         this.pollingInterval = pollingInterval || config.get<number>('api.pollingInterval', 3000);
         this.timeout = timeout || config.get<number>('api.timeout', 10000);
         this.discoveryService = discoveryService;
-        
-        console.log('🔗 API Client initialized:', {
-            url: this.apiUrl,
-            pollingInterval: this.pollingInterval,
-            timeout: this.timeout,
-            hasDiscoveryService: !!this.discoveryService
-        });
     }
 
-    /**
-     * Set discovery service for authentication
-     */
     public setDiscoveryService(discoveryService: any): void {
         this.discoveryService = discoveryService;
     }
@@ -122,7 +112,6 @@ export class ApiClient {
 
     setPairingCode(pairingCode: string) {
         this.pairingCode = pairingCode;
-        console.log('🔗 API Client pairing code set:', pairingCode);
     }
 
     /**
@@ -166,7 +155,6 @@ export class ApiClient {
             const result: ApiResponse = await response.json();
             
             if (result.success) {
-                console.log('✅ Message sent successfully via Discovery API message broker:', message.type);
                 return true;
             } else {
                 console.error('❌ Failed to send message via Discovery API:', result.error);
@@ -195,7 +183,6 @@ export class ApiClient {
             const result: ApiResponse<{messages: Message[], count: number}> = await response.json();
             
             if (result.success && result.data) {
-                console.log(`📨 Retrieved ${result.data.count} messages from mobile app`);
                 return result.data.messages || [];
             } else {
                 console.warn('⚠️ No messages available or API error:', result.error);
@@ -225,7 +212,6 @@ export class ApiClient {
             const result: ApiResponse = await response.json();
             
             if (result.success) {
-                console.log('🧹 Messages cleared successfully');
                 return true;
             }
             
@@ -280,7 +266,6 @@ export class ApiClient {
                 const messages = await this.getMessages();
                 
                 if (messages.length > 0) {
-                    console.log(`📨 Processing ${messages.length} new messages`);
                     
                     // Process each message
                     for (const message of messages) {
@@ -295,11 +280,9 @@ export class ApiClient {
             }
         }, pollingInterval);
 
-        console.log(`🔄 Started message polling every ${pollingInterval}ms`);
 
         return new vscode.Disposable(() => {
             clearInterval(interval);
-            console.log('🛑 Stopped message polling');
         });
     }
 
@@ -351,7 +334,6 @@ export class ApiClient {
             const result = await response.json();
             
             const isHealthy = result.status === 'ok' || result.status === 'healthy';
-            console.log('🧪 API connection test:', isHealthy ? 'Success' : 'Failed', result);
             return isHealthy;
         } catch (error) {
             console.error('❌ API connection test failed:', error);
@@ -366,7 +348,6 @@ export class ApiClient {
      */
     async approveValidation(validationId: string): Promise<ApiResponse> {
         try {
-            console.log('🔐 Approving validation request:', validationId);
             
             const deviceToken = this.discoveryService?.getDeviceToken();
             if (!deviceToken) {
@@ -384,7 +365,6 @@ export class ApiClient {
             const result = await response.json();
             
             if (response.ok) {
-                console.log('✅ Validation approved successfully:', result);
                 return {
                     success: true,
                     data: result,
@@ -412,13 +392,11 @@ export class ApiClient {
      */
     async checkValidationStatus(validationId: string): Promise<ApiResponse> {
         try {
-            console.log('🔍 Checking validation status:', validationId);
             
             const response = await this.fetchWithTimeout(`${this.apiUrl}/api/v1/validation/status/${validationId}`);
             const result = await response.json();
             
             if (response.ok) {
-                console.log('✅ Validation status retrieved:', result);
                 return {
                     success: true,
                     data: result
@@ -445,7 +423,6 @@ export class ApiClient {
      */
     async requestValidation(pairingCode: string, deviceInfo: any): Promise<ApiResponse> {
         try {
-            console.log('📱 Requesting device validation for pairing code:', pairingCode);
             
             const response = await this.fetchWithTimeout(`${this.apiUrl}/api/v1/validation/request`, {
                 method: 'POST',
@@ -463,7 +440,6 @@ export class ApiClient {
             const result = await response.json();
             
             if (response.ok) {
-                console.log('✅ Validation request sent successfully:', result);
                 return {
                     success: true,
                     data: result,

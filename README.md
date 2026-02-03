@@ -4,7 +4,7 @@ Transform your smartphone into an intelligent coding companion! VSCoder brings G
 
 **Perfect for:** Code reviews on commute • Quick fixes from anywhere • AI-assisted mobile coding • Remote development workflows
 
-> **🎉 Latest Update (v1.2.5)**: Enhanced mobile device validation with improved connection stability, production API integration, and optimized rate limiting for reliable mobile app connectivity!
+> **🎉 Latest Update (v1.2.6)**: Fixed critical WebSocket connection issue when switching profiles - mobile app now properly closes old connections before creating new ones, preventing zombie connections and ensuring commands reach the correct VS Code instance!
 
 ## ✨ What Makes VSCoder Special
 
@@ -844,7 +844,29 @@ The extension uses a **WebSocket-first approach** with Discovery API integration
 
 ## 🔧 Recent Updates & Improvements
 
-### Version 1.2.3 (Latest - September 2025)
+### Version 1.2.6 (Latest - November 2025)
+
+**🔧 Critical WebSocket Connection Fix**: Resolved profile switching bug causing zombie connections
+- ✅ **Pairing Code Verification**: Mobile app now verifies existing WebSocket connections use correct pairing code
+- ✅ **Automatic Connection Cleanup**: Old connections automatically closed when switching profiles
+- ✅ **Prevents Zombie Connections**: Eliminates dual WebSocket connections sending commands to wrong VS Code instance
+- ✅ **Seamless Profile Switching**: Switching between profiles now properly routes commands to correct workspace
+- ✅ **Enhanced Reliability**: Ensures only one active WebSocket connection per pairing code
+- ✅ **Cross-Network Stability**: Better handling of profile switches across different networks and locations
+
+**🎯 What This Fixes**:
+- Mobile app keeping old WebSocket connections alive when switching profiles
+- Commands being sent to wrong VS Code instance after profile switch
+- Multiple simultaneous WebSocket connections causing routing confusion
+- User experience issues with stale connections not being cleaned up
+
+**🔄 Technical Details**:
+- Added pairing code extraction from WebSocket URL using regex pattern matching
+- Implemented comparison logic to detect mismatched pairing codes
+- Automatic closure of old connections before establishing new ones
+- Improved connection state management during profile transitions
+
+### Version 1.2.3-1.2.5 (Previous)
 
 **🛠️ Stability & Reliability Enhancements**: Major improvements to extension stability and user experience
 - ✅ **GitHub Copilot Extension Reload**: Added `reloadCopilot()` functionality to fix memory issues and extension crashes

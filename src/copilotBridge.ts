@@ -51,25 +51,16 @@ export class CopilotBridge {
      * Send progress update to connected clients
      */
     private sendProgressUpdate(type: string, data: any): void {
-        console.log(`📡 ✅ sendProgressUpdate called! Type: ${type}`);
-        console.log('📡 Progress data:', data);
-        console.log('📡 Progress callback status:', !!this.progressCallback);
-        
+        // Reduced logging - only essential info
         if (this.progressCallback) {
-            console.log('📡 ✅ Calling progressCallback with update...');
             const updatePayload = {
                 type: 'copilotProgress',
                 updateType: type,
                 data: data,
                 timestamp: new Date().toISOString()
             };
-            console.log('📡 Update payload:', updatePayload);
             
             this.progressCallback(updatePayload);
-            console.log('📡 ✅ progressCallback called successfully!');
-        } else {
-            console.log('📡 ❌ No progressCallback set - update will not be sent to mobile app');
-            this.outputChannel.appendLine(`⚠️ Progress update "${type}" not sent - no callback registered`);
         }
     }
 
@@ -77,22 +68,14 @@ export class CopilotBridge {
      * Main method to handle Copilot requests from mobile app
      */
     async handleCopilotRequest(request: CopilotRequest): Promise<CopilotResponse> {
-        console.log('🎯 handleCopilotRequest called with:', request.type);
-        this.outputChannel.appendLine(`🎯 Copilot request: ${JSON.stringify(request)}`);
-
         try {
             if (request.type !== 'agent') {
                 return { success: false, error: 'Only agent mode is supported' };
             }
 
-            console.log('🤖 Handling agent mode request');
             const result = await this.handleAgentMode(request);
-            
-            console.log('✅ Agent request processed successfully:', result.success);
-            this.outputChannel.appendLine(`✅ Agent result: success=${result.success}`);
             return result;
         } catch (error) {
-            console.error('❌ handleCopilotRequest error:', error);
             this.outputChannel.appendLine(`❌ Copilot error: ${error}`);
             return { success: false, error: String(error) };
         }
@@ -102,20 +85,16 @@ export class CopilotBridge {
      * Handle agent mode requests with enhanced real-time monitoring
      */
     private async handleAgentMode(request: CopilotRequest): Promise<CopilotResponse> {
-        this.outputChannel.appendLine(`🤖 Agent Mode: ${request.agentMode || 'autonomous'} - Invoking GitHub Copilot Agent programmatically`);
-        
         try {
             const agentMode = request.agentMode || 'autonomous';
             
-            // Send initial progress update
             this.sendProgressUpdate('started', {
-                message: `Starting ${agentMode} mode with GitHub Copilot Agent...`,
+                message: `Starting ${agentMode} mode...`,
                 agentMode: agentMode
             });
             
             // Switch model if specified
             if (request.modelName) {
-                this.outputChannel.appendLine(`🔄 Switching to model: ${request.modelName}`);
                 this.sendProgressUpdate('model_switching', {
                     message: `Switching to model: ${request.modelName}`,
                     modelName: request.modelName
@@ -124,24 +103,14 @@ export class CopilotBridge {
                 try {
                     const changeResult = await this.changeModel(request.modelName);
                     if (changeResult.success && changeResult.data?.successfulFormat) {
-                        this.outputChannel.appendLine(`✅ Model switched using format: ${changeResult.data.successfulFormat}`);
                         this.sendProgressUpdate('model_switched', {
-                            message: `Successfully switched to model: ${request.modelName}`,
-                            modelName: request.modelName,
-                            format: changeResult.data.successfulFormat
-                        });
-                    } else {
-                        this.outputChannel.appendLine(`⚠️ Model change returned success=${changeResult.success}, but may not have actually changed`);
-                        this.sendProgressUpdate('model_switch_warning', {
-                            message: `Model switch status uncertain for: ${request.modelName}`,
+                            message: `Switched to: ${request.modelName}`,
                             modelName: request.modelName
                         });
                     }
                 } catch (modelError) {
-                    this.outputChannel.appendLine(`⚠️ Failed to switch model: ${modelError}, continuing with current model`);
                     this.sendProgressUpdate('model_switch_failed', {
-                        message: `Failed to switch model: ${modelError}`,
-                        modelName: request.modelName,
+                        message: `Failed to switch model`,
                         error: String(modelError)
                     });
                 }
@@ -151,71 +120,52 @@ export class CopilotBridge {
             const agentPrompt = this.createAgentPrompt(request, agentMode);
             
             this.sendProgressUpdate('prompt_prepared', {
-                message: `Prepared prompt for GitHub Copilot Agent`,
-                agentMode: agentMode,
-                promptLength: agentPrompt.length
+                message: `Prepared prompt`,
+                agentMode: agentMode
             });
             
-            // Try to programmatically invoke the Copilot Agent with chat history sync
             this.sendProgressUpdate('invoking_agent', {
-                message: `Invoking GitHub Copilot Agent...`,
+                message: `Invoking Copilot Agent...`,
                 agentMode: agentMode
             });
             
             const success = await this.invokeCopilotAgentSimple(agentPrompt);
             
             if (success) {
-                // Start chat history synchronization to capture responses
                 this.startChatHistorySync();
                 
                 this.sendProgressUpdate('completed', {
-                    message: `GitHub Copilot Agent completed successfully`,
-                    agentMode: agentMode,
-                    hasResponse: true
+                    message: `Copilot Agent completed`,
+                    agentMode: agentMode
                 });
                 
                 return {
                     success: true,
                     data: {
-                        message: `GitHub Copilot Agent (${agentMode}) completed successfully - chat sync started`,
-                        agentMode: agentMode,
-                        modelName: request.modelName || 'default',
-                        prompt: agentPrompt,
-                        action: 'agent_completed_with_response',
-                        capturedResponse: `GitHub Copilot Agent processed your request successfully`,
-                        note: 'Copilot Agent processed your request and chat history sync is active'
+                        message: `Copilot Agent (${agentMode}) completed - chat sync started`,
+                        agentMode: agentMode
                     }
                 };
             } else {
                 this.sendProgressUpdate('failed', {
-                    message: `GitHub Copilot Agent failed`,
-                    agentMode: agentMode,
-                    error: 'Agent invocation returned false'
+                    message: `Agent failed`,
+                    error: 'Invocation returned false'
                 });
                 
                 return {
                     success: false,
-                    data: {
-                        message: `GitHub Copilot Agent (${agentMode}) failed`,
-                        agentMode: agentMode,
-                        modelName: request.modelName || 'default',
-                        prompt: agentPrompt,
-                        action: 'agent_failed',
-                        note: 'Copilot Agent could not process the request automatically'
-                    },
-                    error: 'Copilot Agent invocation failed - no manual fallbacks'
+                    error: 'Copilot Agent invocation failed'
                 };
             }
         } catch (error) {
-            this.outputChannel.appendLine(`❌ Agent mode error: ${error}`);
             this.sendProgressUpdate('error', {
-                message: `Agent mode error: ${error}`,
+                message: `Error: ${error}`,
                 error: String(error)
             });
             
             return {
                 success: false,
-                error: `VSCoder Agent mode failed: ${error}`
+                error: `Agent failed: ${error}`
             };
         }
     }
@@ -224,57 +174,19 @@ export class CopilotBridge {
      * Programmatically invoke the actual GitHub Copilot Workspace Agent
      */
     private async invokeCopilotAgent(prompt: string): Promise<boolean> {
-        this.outputChannel.appendLine('🚀 Invoking GitHub Copilot Workspace Agent...');
-        
         try {
-            // Prepare the full prompt
             const fullPrompt = prompt.startsWith('@workspace') ? prompt : `@workspace ${prompt}`;
-            this.outputChannel.appendLine(`📤 Prepared prompt: ${fullPrompt}`);
             
-            // Focus on Copilot Chat
             try {
-                this.outputChannel.appendLine('🔄 Focusing on Copilot Chat...');
                 await vscode.commands.executeCommand('workbench.panel.chat.view.copilot.focus');
                 await new Promise(resolve => setTimeout(resolve, 500));
-                this.outputChannel.appendLine('✅ Copilot Chat focused');
             } catch (focusError) {
-                this.outputChannel.appendLine(`❌ Failed to focus Copilot Chat: ${focusError}`);
+                // Focus failed, continue anyway
             }
             
-            // Try to submit the prompt
             try {
-                this.outputChannel.appendLine('🔄 Attempting to send message using commands...');
-                
-                // First, let's get all available commands to see what we have
-                const allCommands = await vscode.commands.getCommands();
-                console.log('🔍 Total commands available:', allCommands.length);
-                
-                // Filter and log only chat-related commands
-                const allChatCommands = allCommands.filter(cmd => cmd.includes('chat'));
-                console.log('🗨️ ALL CHAT COMMANDS:', allChatCommands);
-                this.outputChannel.appendLine(`🗨️ All chat commands (${allChatCommands.length}): ${allChatCommands.join(', ')}`);
-                
-                // Filter and log only copilot-related commands
-                const allCopilotCommands = allCommands.filter(cmd => cmd.includes('copilot'));
-                console.log('🤖 ALL COPILOT COMMANDS:', allCopilotCommands);
-                this.outputChannel.appendLine(`🤖 All copilot commands (${allCopilotCommands.length}): ${allCopilotCommands.join(', ')}`);
-                
-                const chatCommands = allCommands.filter(cmd => 
-                    cmd.includes('chat') && (
-                        cmd.includes('send') || 
-                        cmd.includes('submit') || 
-                        cmd.includes('accept') ||
-                        cmd.includes('execute') ||
-                        cmd.includes('run')
-                    )
-                );
-                this.outputChannel.appendLine(`� Available chat submission commands: ${chatCommands.join(', ')}`);
-                
-                // Try different command approaches using the actual workbench commands
                 const commandAttempts = [
-                    // Method 1: Direct agent mode with submit
                     async () => {
-                        this.outputChannel.appendLine('🔄 Method 1: Using workbench.action.chat.openAgent + submit...');
                         await vscode.commands.executeCommand('workbench.action.chat.openAgent');
                         await new Promise(resolve => setTimeout(resolve, 1000));
                         await vscode.commands.executeCommand('workbench.action.chat.focusInput');
@@ -283,9 +195,7 @@ export class CopilotBridge {
                         await new Promise(resolve => setTimeout(resolve, 300));
                         await vscode.commands.executeCommand('workbench.action.chat.submit');
                     },
-                    // Method 2: Toggle to agent mode first
                     async () => {
-                        this.outputChannel.appendLine('🔄 Method 2: Using workbench.action.chat.toggleAgentMode...');
                         await vscode.commands.executeCommand('workbench.action.chat.open');
                         await new Promise(resolve => setTimeout(resolve, 500));
                         await vscode.commands.executeCommand('workbench.action.chat.toggleAgentMode');
@@ -294,14 +204,10 @@ export class CopilotBridge {
                         await vscode.commands.executeCommand('type', { text: fullPrompt });
                         await vscode.commands.executeCommand('workbench.action.chat.submit');
                     },
-                    // Method 3: Try the Copilot specific commands
                     async () => {
-                        this.outputChannel.appendLine('🔄 Method 3: Using github.copilot.chat.generate...');
                         await vscode.commands.executeCommand('github.copilot.chat.generate', fullPrompt);
                     },
-                    // Method 4: Use copilot-chat.open with typing
                     async () => {
-                        this.outputChannel.appendLine('🔄 Method 4: Using copilot-chat.open with manual input...');
                         await vscode.commands.executeCommand('copilot-chat.open');
                         await new Promise(resolve => setTimeout(resolve, 500));
                         await vscode.commands.executeCommand('copilot-chat.focus');
@@ -310,33 +216,26 @@ export class CopilotBridge {
                     }
                 ];
                 
-                // Try each command
                 for (let i = 0; i < commandAttempts.length; i++) {
                     try {
                         await commandAttempts[i]();
-                        this.outputChannel.appendLine(`✅ Successfully sent message via command method ${i + 1}`);
                         return true;
                     } catch (commandError) {
-                        this.outputChannel.appendLine(`❌ Command method ${i + 1} failed: ${commandError}`);
+                        // Method failed, try next
                     }
                 }
                 
-                // If all commands fail, try to open agent mode at least
-                this.outputChannel.appendLine('🔄 All command methods failed, opening agent mode as fallback...');
                 const agentModeUri = vscode.Uri.parse('vscode://GitHub.Copilot-Chat/chat?mode=agent');
                 await vscode.commands.executeCommand('vscode.open', agentModeUri);
                 await vscode.env.clipboard.writeText(fullPrompt);
-                this.outputChannel.appendLine('✅ Agent mode opened, prompt copied to clipboard');
                 
                 return true;
                 
             } catch (submissionError) {
-                this.outputChannel.appendLine(`❌ All submission methods failed: ${submissionError}`);
                 return false;
             }
             
         } catch (error) {
-            this.outputChannel.appendLine(`❌ GitHub Copilot Agent invocation failed: ${error}`);
             return false;
         }
     }
@@ -1200,18 +1099,8 @@ export class CopilotBridge {
      * Create agent prompt based on mode with context support
      */
     private createAgentPrompt(request: CopilotRequest, agentMode: string): string {
-        console.log(`📝 Creating ${agentMode} prompt without additional context`);
-        this.outputChannel.appendLine(`📝 Creating ${agentMode} prompt without additional context`);
-        
-        // Use the prompt exactly as provided by the user
-        let prompt = request.prompt;
-        
-        this.outputChannel.appendLine(`📝 Using user prompt as-is, no context added`);
-        
-        // Ensure @workspace prefix for agent mode
+        const prompt = request.prompt;
         const finalPrompt = prompt.startsWith('@workspace') ? prompt : `@workspace ${prompt}`;
-        
-        this.outputChannel.appendLine(`📝 Final agent prompt: ${finalPrompt.substring(0, 200)}...`);
         return finalPrompt;
     }
     /**
@@ -2152,163 +2041,95 @@ export class CopilotBridge {
      * Start continuous chat history synchronization
      */
     public async startChatHistorySync(): Promise<void> {
-        console.log('🚀 startChatHistorySync() called!');
-        console.log('🔄 Starting continuous chat history synchronization...');
-        this.outputChannel.appendLine('🔄 Starting continuous chat history synchronization...');
-        
-        // Stop any existing sync first
         if ((this as any).chatSyncInterval) {
-            console.log('🛑 Stopping previous chat sync interval...');
             clearInterval((this as any).chatSyncInterval);
             (this as any).chatSyncInterval = null;
         }
         
-        const syncInterval = 5000; // Sync every 5 seconds
-        let lastChatContent = ''; // ALWAYS start fresh
+        const syncInterval = 5000;
+        let lastChatContent = '';
+        let lastChatHash = 0;
         
-        // DEBUG: Reset tracking
-        console.log('🔧 DEBUG: Initializing new chat sync session');
-        console.log(`🔧 DEBUG: lastChatContent initial value: "${lastChatContent}" (length: ${lastChatContent.length})`);
+        const quickHash = (str: string): number => {
+            let hash = 0;
+            for (let i = 0; i < str.length; i++) {
+                hash = ((hash << 5) - hash) + str.charCodeAt(i);
+                hash = hash & hash;
+            }
+            return hash;
+        };
         
         const syncHistory = async () => {
             try {
-                console.log('🔄 syncHistory() function called - starting chat sync...');
-                console.log(`🔧 DEBUG: lastChatContent at start: "${lastChatContent.substring(0, 100)}..." (length: ${lastChatContent.length})`);
-                this.outputChannel.appendLine('🔄 Starting chat history sync...');
-                
-                // Always focus chat first to ensure copyAll works
-                console.log('🎯 Focusing chat before copying content...');
+                // Quick focus check - if chat isn't visible, skip expensive operations
                 try {
                     await vscode.commands.executeCommand('workbench.panel.chat.view.copilot.focus');
-                    await new Promise(resolve => setTimeout(resolve, 300));
-                    console.log('✅ Chat focused successfully');
+                    await new Promise(resolve => setTimeout(resolve, 200));
                 } catch (focusError) {
-                    console.log(`⚠️ Failed to focus chat: ${focusError}`);
-                    this.outputChannel.appendLine(`⚠️ Failed to focus chat: ${focusError}`);
+                    return;
                 }
                 
-                // Clear clipboard to ensure clean state
-                console.log('📋 Clearing clipboard...');
                 await vscode.env.clipboard.writeText('');
-                await new Promise(resolve => setTimeout(resolve, 200));
+                await new Promise(resolve => setTimeout(resolve, 100));
                 
-                // Copy all chat content
-                console.log('📋 Executing workbench.action.chat.copyAll command...');
-                this.outputChannel.appendLine('📋 Copying all chat content...');
                 await vscode.commands.executeCommand('workbench.action.chat.copyAll');
-                await new Promise(resolve => setTimeout(resolve, 800));
+                await new Promise(resolve => setTimeout(resolve, 500));
                 
-                // Read the copied content
-                console.log('📋 Reading content from clipboard...');
                 const chatContent = await vscode.env.clipboard.readText() || '';
-                console.log(`📊 Clipboard content length: ${chatContent.length} characters`);
-                console.log(`🔧 DEBUG: First 500 chars of chatContent: "${chatContent.substring(0, 500)}..."`);
-                console.log(`🔧 DEBUG: Last 500 chars of chatContent: "...${chatContent.substring(Math.max(0, chatContent.length - 500))}"`);
-                console.log(`🔧 DEBUG: First 200 chars of lastChatContent: "${lastChatContent.substring(0, 200)}..."`);
-                console.log(`🔧 DEBUG: Are they exactly equal? ${chatContent === lastChatContent}`);
-                
-                // Debug: Show line structure
-                const lines = chatContent.split('\n');
-                console.log(`📝 DEBUG: Chat has ${lines.length} lines total`);
-                console.log(`📝 DEBUG: First 10 lines:`, lines.slice(0, 10));
-                console.log(`📝 DEBUG: Last 10 lines:`, lines.slice(-10));
-                
-                this.outputChannel.appendLine(`📊 Got ${chatContent.length} characters from clipboard`);
-                this.outputChannel.appendLine(`📝 Chat has ${lines.length} lines total`);
                 
                 if (chatContent.length === 0) {
-                    console.log('⚠️ No chat content found - clipboard is empty');
-                    this.outputChannel.appendLine('⚠️ No chat content found - clipboard is empty');
                     return;
                 }
                 
-                // Check if content has changed since last sync
-                console.log(`🔍 Comparing with last sync. Current: ${chatContent.length} chars, Last: ${lastChatContent.length} chars`);
-                // Re-enabled proper content comparison to prevent duplicate syncs
-                const FORCE_SYNC = false; // Disabled to only sync when content actually changes
-                if (!FORCE_SYNC && chatContent === lastChatContent) {
-                    console.log('ℹ️ No new chat content since last sync - skipping');
-                    this.outputChannel.appendLine('ℹ️ No new chat content since last sync');
+                const currentHash = quickHash(chatContent);
+                if (currentHash === lastChatHash && chatContent.length === lastChatContent.length) {
                     return;
                 }
-                if (FORCE_SYNC) {
-                    console.log('🔄 Forcing sync regardless of content changes (FORCE_SYNC = true)');
-                } else {
-                    console.log('✅ Content changed since last sync - proceeding with sync');
-                }
                 
-                // Extract recent messages
-                console.log('📝 Extracting recent messages...');
+                lastChatContent = chatContent;
+                lastChatHash = currentHash;
+                
                 const recentMessages = this.extractRecentMessages(chatContent, 15);
-                console.log(`📝 Extracted ${recentMessages.length} messages`);
                 
-                // Log what we're sending to console
-                console.log('🚀 === CHAT SYNC DATA BEING SENT ===');
-                console.log(`📊 Message Count: ${recentMessages.length}`);
-                console.log(`📏 Content Length: ${chatContent.length}`);
-                console.log(`⏰ Timestamp: ${new Date().toISOString()}`);
-                console.log('📝 Recent Messages:', recentMessages);
-                console.log('📋 Full Content Preview:', chatContent.substring(0, 500) + '...');
-                console.log('🔄 Sync Method: realtime_sync');
-                
-                // Send to mobile app
-                console.log('📡 Calling sendProgressUpdate with chatHistorySync...');
                 this.sendProgressUpdate('chatHistorySync', {
-                    message: 'Real-time chat history sync',
+                    message: 'Chat history updated',
                     messages: recentMessages,
                     fullContent: chatContent,
                     timestamp: new Date().toISOString(),
                     messageCount: recentMessages.length,
-                    hasNewContent: true,
-                    contentLength: chatContent.length,
-                    method: 'realtime_sync'
+                    contentLength: chatContent.length
                 });
-                console.log('📡 sendProgressUpdate call completed');
-                
-                // Update last content for comparison
-                lastChatContent = chatContent;
-                console.log('💾 Updated lastChatContent for next comparison');
-                
-                this.outputChannel.appendLine(`✅ Successfully synced ${recentMessages.length} messages to mobile app`);
-                console.log(`✅ Chat sync completed - sent ${recentMessages.length} messages`);
                 
             } catch (error) {
-                console.log(`❌ Error in syncHistory: ${error}`);
-                this.outputChannel.appendLine(`❌ Error syncing chat history: ${error}`);
+                // Silent
             }
         };
         
-        // Start immediate sync and WAIT for it to complete
-        console.log('🏁 Starting immediate sync and waiting for completion...');
         await syncHistory();
-        console.log('✅ Initial sync completed, now setting up periodic sync...');
-        
-        // Set up periodic sync every 5 seconds
-        console.log(`🕐 Setting up periodic sync every ${syncInterval/1000} seconds...`);
         const syncIntervalId = setInterval(syncHistory, syncInterval);
-        
-        this.outputChannel.appendLine(`🔄 Chat history sync started - syncing every ${syncInterval/1000} seconds`);
-        console.log(`✅ Chat history sync setup completed - interval ID: ${syncIntervalId}`);
         
         // Store interval ID for potential cleanup (optional)
         (this as any).chatSyncInterval = syncIntervalId;
     }
 
     /**
-     * Fallback method to sync chat using alternative approaches
+     * Stop continuous chat history synchronization
      */
+    public stopChatHistorySync(): void {
+        if ((this as any).chatSyncInterval) {
+            clearInterval((this as any).chatSyncInterval);
+            (this as any).chatSyncInterval = null;
+        }
+    }
+
     private async fallbackChatSync(): Promise<void> {
-        this.outputChannel.appendLine('🔄 Attempting fallback chat synchronization...');
         
         try {
-            // Always focus chat first
-            console.log('🎯 Focusing chat before fallback sync...');
             try {
                 await vscode.commands.executeCommand('workbench.panel.chat.view.copilot.focus');
                 await new Promise(resolve => setTimeout(resolve, 500));
-                console.log('✅ Chat focused for fallback sync');
             } catch (focusError) {
-                console.log(`⚠️ Failed to focus chat for fallback: ${focusError}`);
+                // Silent failure
             }
             
             // Method 1: Try to get chat session info
@@ -2359,18 +2180,10 @@ export class CopilotBridge {
         const messages: any[] = [];
         
         try {
-            console.log('🔍 === EXTRACTING MESSAGES DEBUG ===');
-            console.log(`📊 Total chat text length: ${chatText.length}`);
-            console.log(`📝 First 500 chars of chat text: "${chatText.substring(0, 500)}..."`);
             this.outputChannel.appendLine(`📊 Extracting from ${chatText.length} characters of chat text`);
             
-            // Try multiple splitting strategies to find the best one
-            
-            // Strategy 1: Split by double newlines (original approach)
             const messageBlocks = chatText.split(/\n\s*\n/);
-            console.log(`📦 Strategy 1: Found ${messageBlocks.length} blocks by double newlines`);
             
-            // Strategy 2: Handle real chat format with proper prefixes
             const lines = chatText.split('\n');
             let currentMessage: string[] = [];
             let currentRole = '';
@@ -2379,11 +2192,9 @@ export class CopilotBridge {
                 const line = lines[i];
                 const trimmedLine = line.trim();
                 
-                // Check for user message (contains @workspace or starts with username: @workspace)
                 if (trimmedLine.startsWith('@workspace') || 
                     trimmedLine.includes(': @workspace')) {
                     
-                    // Save previous message if it exists
                     if (currentMessage.length > 0) {
                         const content = currentMessage.join('\n').trim();
                         if (content.length > 0) {
@@ -2394,18 +2205,13 @@ export class CopilotBridge {
                                 content: content,
                                 rawBlock: currentMessage.join('\n')
                             });
-                            console.log(`✅ Added message: role=${currentRole}, length=${content.length}, preview="${content.substring(0, 100)}..."`);
                         }
                     }
                     
-                    // Start new USER message
                     currentMessage = [line];
                     currentRole = 'user';
-                    console.log(`🆕 New USER message: "${trimmedLine}"`);
                 }
-                // Check for GitHub Copilot response
                 else if (trimmedLine.startsWith('GitHub Copilot:')) {
-                    // Save previous message if it exists
                     if (currentMessage.length > 0) {
                         const content = currentMessage.join('\n').trim();
                         if (content.length > 0) {
@@ -2416,28 +2222,21 @@ export class CopilotBridge {
                                 content: content,
                                 rawBlock: currentMessage.join('\n')
                             });
-                            console.log(`✅ Added message: role=${currentRole}, length=${content.length}, preview="${content.substring(0, 100)}..."`);
                         }
                     }
                     
-                    // Start new ASSISTANT message
                     currentMessage = [line];
                     currentRole = 'assistant';
-                    console.log(`🆕 New ASSISTANT message: "${trimmedLine.substring(0, 50)}..."`);
                 }
-                // Continue current message
                 else if (currentMessage.length > 0) {
                     currentMessage.push(line);
                 }
-                // If we don't have a current message and this is content, assume it's assistant
                 else if (trimmedLine.length > 0) {
                     currentMessage = [line];
                     currentRole = 'assistant';
-                    console.log(`🆕 New ASSISTANT message (default): "${trimmedLine.substring(0, 50)}..."`);
                 }
             }
             
-            // Handle the last message
             if (currentMessage.length > 0) {
                 const content = currentMessage.join('\n').trim();
                 if (content.length > 0) {
@@ -2448,34 +2247,21 @@ export class CopilotBridge {
                         content: content,
                         rawBlock: currentMessage.join('\n')
                     });
-                    console.log(`✅ Added final message: role=${currentRole}, length=${content.length}, preview="${content.substring(0, 100)}..."`);
                 }
             }
             
-            console.log(`📊 Strategy 2: Extracted ${messages.length} messages by line parsing`);
-            
-            // Take the most recent messages (they're already in order)
             const recentMessages = messages.slice(-count);
-            
-            console.log(`📋 Final result: ${recentMessages.length} recent messages`);
-            recentMessages.forEach((msg, index) => {
-                console.log(`  ${index + 1}. ${msg.role}: "${msg.content.substring(0, 100)}..." (${msg.content.length} chars)`);
-            });
             
             this.outputChannel.appendLine(`📋 Extracted ${recentMessages.length} messages from chat`);
             
             return recentMessages;
             
         } catch (error) {
-            console.log(`❌ Error extracting messages: ${error}`);
             this.outputChannel.appendLine(`❌ Error extracting messages: ${error}`);
             return [];
         }
     }
 
-    /**
-     * Check if a line starts a new message
-     */
     private isMessageStart(line: string): boolean {
         const trimmedLine = line.trim();
         // User messages always start with @workspace

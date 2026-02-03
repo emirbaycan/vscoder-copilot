@@ -54,51 +54,30 @@ export class DiscoveryService {
         // Always start unauthenticated and require fresh authentication
         this.deviceToken = undefined;
         this.isAuthenticated = false;
-        
-        if (config.deviceToken) {
-            console.log('⚠️ Ignoring stored device token from config - will authenticate fresh to avoid 401 errors');
-            console.log('🔑 Previous token preview:', `${config.deviceToken.substring(0, 20)}... (length: ${config.deviceToken.length})`);
-        }
     }
 
-    /**
-     * Authenticate device and get access token
-     */
     public async authenticateDevice(): Promise<boolean> {
         if (!this.pairingCode) {
             this.generatePairingCode();
         }
 
         try {
-            console.log('🔐 Authenticating VS Code extension with Discovery API...');
-            console.log('🔑 Current device token before auth:', this.deviceToken ? `${this.deviceToken.substring(0, 20)}... (length: ${this.deviceToken.length})` : 'undefined');
-            console.log('🔑 Pairing code:', this.pairingCode);
-
-            // Use correct API format as per Discovery API specification
             const authRequest = {
                 device_type: 'vscode',
                 device_name: this.getDeviceInfo().name,
                 pairing_code: this.pairingCode
             };
 
-            console.log('📤 Sending auth request:', authRequest);
             const response = await this.makeApiRequest('/api/v1/auth/token', 'POST', authRequest) as AuthenticationResponse;
-            console.log('📥 Auth response:', response);
 
             if (response.success && response.data && response.data.token) {
                 this.deviceToken = response.data.token;
                 this.isAuthenticated = true;
 
-                console.log('✅ VS Code extension authenticated successfully');
-                console.log('🔑 New device token:', this.deviceToken ? `${this.deviceToken.substring(0, 20)}... (length: ${this.deviceToken.length})` : 'undefined');
-                console.log('🔑 Token expires:', response.data.expires_at);
-
-                // Save token to configuration for persistence
                 await this.saveTokenToConfig(this.deviceToken);
 
                 return true;
             } else {
-                console.log('❌ Authentication failed - invalid response:', response);
                 throw new Error(response.error || 'Authentication failed');
             }
         } catch (error: any) {
@@ -143,16 +122,13 @@ export class DiscoveryService {
      * Logout and clear authentication
      */
     public async logout(): Promise<void> {
-        console.log('🚪 Logging out VS Code extension...');
         this.deviceToken = undefined;
         this.isAuthenticated = false;
         this.isRegistered = false;
 
-        // Clear token from configuration
         const config = vscode.workspace.getConfiguration('vscoder');
         await config.update('deviceToken', undefined, vscode.ConfigurationTarget.Global);
 
-        // Stop heartbeat
         if (this.registrationInterval) {
             clearInterval(this.registrationInterval);
             this.registrationInterval = undefined;
@@ -200,9 +176,6 @@ export class DiscoveryService {
      * Get the public IP address and port for remote access
      */
     private async getPublicAddress(port: number): Promise<string> {
-        console.log('🌐 Getting public IP address for remote access...');
-        
-        // Try multiple public IP services for reliability
         const publicIpServices = [
             { url: 'https://api.ipify.org', isHttps: true },
             { url: 'https://ipinfo.io/ip', isHttps: true },
@@ -212,20 +185,14 @@ export class DiscoveryService {
         
         for (const service of publicIpServices) {
             try {
-                console.log(`🔍 Trying IP service: ${service.url}`);
-                
                 const publicIP = await this.makeHttpRequest(service.url, service.isHttps);
                 
-                // Validate IP format
                 const ipRegex = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
                 if (ipRegex.test(publicIP)) {
-                    console.log(`✅ Got public IP from ${service.url}: ${publicIP}`);
                     return `${publicIP}:${port}`;
-                } else {
-                    console.warn(`⚠️ Invalid IP format from ${service.url}: ${publicIP}`);
                 }
             } catch (serviceError) {
-                console.warn(`⚠️ Failed to get IP from ${service.url}:`, serviceError);
+                // Try next service
             }
         }
         
@@ -284,18 +251,7 @@ export class DiscoveryService {
      * Public method to trigger authentication
      */
     public async authenticate(): Promise<void> {
-        console.log('🔐 Starting authentication process...');
-        console.log('🔑 Current authentication state:', {
-            isAuthenticated: this.isAuthenticated,
-            hasDeviceToken: !!this.deviceToken,
-            deviceTokenLength: this.deviceToken ? this.deviceToken.length : 0,
-            deviceTokenPreview: this.deviceToken ? this.deviceToken.substring(0, 10) + '...' : 'none'
-        });
-
-        // Always try to authenticate - don't trust old tokens from config
-        // Clear any existing invalid token first
         if (this.deviceToken && this.deviceToken.length < 20) {
-            console.log('⚠️ Clearing invalid short device token from config');
             this.deviceToken = undefined;
             this.isAuthenticated = false;
         }
@@ -310,7 +266,6 @@ export class DiscoveryService {
      * Register the VS Code extension with the discovery service
      */
     public async register(port: number): Promise<void> {
-        // Ensure device is authenticated first
         if (!this.isAuthenticated && !await this.authenticateDevice()) {
             throw new Error('Cannot register: Device authentication failed');
         }
@@ -321,34 +276,19 @@ export class DiscoveryService {
 
         const registrationData: RegistrationRequest = {
             pairing_code: this.pairingCode!,
-            ip_address: await this.getPublicAddress(port), // Use public IP for remote access
+            ip_address: await this.getPublicAddress(port),
             cert_fingerprint: this.generateCertFingerprint(),
             device_info: this.getDeviceInfo()
         };
-
-        console.log('🔐 Registering VS Code extension with discovery service:', {
-            pairingCode: this.pairingCode,
-            ipAddress: registrationData.ip_address,
-            deviceName: registrationData.device_info.name,
-            authenticated: this.isAuthenticated
-        });
 
         try {
             await this.makeApiRequest('/api/v1/register', 'POST', registrationData);
             this.isRegistered = true;
             
-            // Log success message (pairing code is already shown in status bar)
-            console.log(`📱 VSCoder ready for remote access! Pairing code: ${this.pairingCode}`);
-            console.log('Share this code with your mobile app to connect securely from anywhere via Discovery API.');
-
-            // Start heartbeat
             this.startHeartbeat(port);
-            
-            console.log('✅ VS Code extension registered successfully');
         } catch (error: any) {
             console.error('❌ Registration failed:', error);
             
-            // Enhanced error handling for different scenarios
             let errorMessage = `Failed to register with discovery service: ${error.message || error}`;
             let actions = ['Retry', 'Check Settings'];
             
@@ -381,36 +321,28 @@ export class DiscoveryService {
      * Start sending heartbeats to keep the registration active
      */
     private startHeartbeat(port: number): void {
-        // Clear existing interval
         if (this.registrationInterval) {
             clearInterval(this.registrationInterval);
         }
 
-        // Send heartbeat every 10 minutes (increased from 5 minutes to reduce API calls)
         this.registrationInterval = setInterval(async () => {
             try {
                 await this.sendHeartbeat(port);
-                console.log('💓 Heartbeat sent successfully');
             } catch (error: any) {
                 console.error('❌ Heartbeat failed:', error);
                 
-                // Handle rate limiting gracefully
                 if (error.message?.includes('429') || error.message?.includes('rate limit')) {
-                    console.log('⚠️ Heartbeat rate limited, will retry later');
-                    // Don't try to re-register immediately on rate limit
                     return;
                 }
                 
-                // Try to re-register if heartbeat fails for other reasons
                 this.isRegistered = false;
                 try {
-                    console.log('🔄 Attempting re-registration after heartbeat failure...');
                     await this.register(port);
                 } catch (registerError) {
                     console.error('❌ Re-registration failed:', registerError);
                 }
             }
-        }, 10 * 60 * 1000); // 10 minutes
+        }, 10 * 60 * 1000);
     }
 
     /**
@@ -433,15 +365,11 @@ export class DiscoveryService {
      * Unregister from the discovery service
      */
     public async unregister(): Promise<void> {
-        // Send disconnect notification if we have a pairing code
         if (this.pairingCode) {
             try {
-                console.log('📡 Sending VS Code disconnect notification to Discovery API...');
                 await this.sendDisconnectNotification();
-                console.log('✅ VS Code disconnect notification sent successfully');
             } catch (error) {
                 console.warn('⚠️ Failed to send disconnect notification:', error);
-                // Don't throw - this is cleanup, shouldn't block shutdown
             }
         }
         
@@ -451,16 +379,11 @@ export class DiscoveryService {
         }
 
         this.isRegistered = false;
-        this.pairingCode = undefined; // Clear pairing code on disconnect
-        console.log('🛑 Unregistered from discovery service');
+        this.pairingCode = undefined;
     }
 
-    /**
-     * Send disconnect notification to Discovery API
-     */
     private async sendDisconnectNotification(): Promise<void> {
         if (!this.pairingCode) {
-            console.log('⚠️ No pairing code available for disconnect notification');
             return;
         }
 
@@ -500,25 +423,23 @@ export class DiscoveryService {
                 
                 res.on('end', () => {
                     if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
-                        console.log('✅ Disconnect notification sent successfully');
                         resolve();
                     } else {
                         console.warn(`⚠️ Disconnect notification failed with status ${res.statusCode}: ${responseData}`);
-                        resolve(); // Don't reject on disconnect failure
+                        resolve();
                     }
                 });
             });
 
             req.on('error', (error) => {
                 console.warn('⚠️ Error sending disconnect notification:', error.message);
-                resolve(); // Don't reject on disconnect failure
+                resolve();
             });
 
-            // Set timeout for disconnect request
             req.setTimeout(5000, () => {
                 req.destroy();
                 console.warn('⚠️ Disconnect notification timed out');
-                resolve(); // Don't reject on timeout
+                resolve();
             });
 
             req.write(data);
@@ -598,37 +519,26 @@ export class DiscoveryService {
         const config = vscode.workspace.getConfiguration('vscoder');
         
         const apiUrl = config.get<string>('api.url', 'https://api.vscodercopilot.com.tr');
-        const deviceToken = config.get<string>('deviceToken'); // Don't use - force fresh auth
+        const deviceToken = config.get<string>('deviceToken');
         const pairingCode = config.get<string>('pairingCode');
 
-        console.log('🔍 DEBUG DiscoveryService.fromConfig():');
-        console.log('🔍 - API URL:', apiUrl);
-        console.log('🔍 - Device Token from config:', deviceToken ? 'EXISTS' : 'NONE');
-        console.log('🔍 - Pairing Code from config:', pairingCode);
-
-        // Clear any stored device token to force fresh authentication and avoid 401 errors
         if (deviceToken) {
-            console.log('🧹 Clearing stored device token from config to force fresh authentication');
             config.update('deviceToken', undefined, vscode.ConfigurationTarget.Global).then(
-                () => console.log('✅ Old device token cleared from config'),
+                undefined,
                 (err: any) => console.warn('Warning: Failed to clear old device token from config:', err)
             );
         }
 
         return new DiscoveryService({
             apiUrl,
-            deviceToken: undefined, // Always start fresh to avoid expired tokens
+            deviceToken: undefined,
             pairingCode
         });
     }
 
-    /**
-     * Save device token to VS Code configuration
-     */
     private async saveTokenToConfig(token: string): Promise<void> {
         const config = vscode.workspace.getConfiguration('vscoder');
         await config.update('deviceToken', token, vscode.ConfigurationTarget.Global);
-        console.log('💾 Device token saved to VS Code configuration');
     }
 
     /**

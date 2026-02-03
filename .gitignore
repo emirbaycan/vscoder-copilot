@@ -1,4 +1,5 @@
-# Compiled output
+.github
+# Compiled output7
 out/
 dist/
 *.vsix
@@ -83,3 +84,7 @@ test_agent.js
 
 # Package files
 *.vsix
+
+
+.github/instructions/kluster-code-verify.instructions.md
+.kluster

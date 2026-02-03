@@ -2,6 +2,28 @@
 
 All notable changes to the "VSCoder Copilot" extension will be documented in this file.
 
+## [1.2.7] - 2026-02-03
+
+### Performance & Stability
+- **Major Performance Boost**: Removed 259,200+ unnecessary logs per day, significantly improving memory usage and responsiveness
+- **Chat Sync Optimization**: Reduced sync cycle time from 1.3s to 0.8s using hash-based change detection
+- **Server Control Commands**: Added stop/pause and resume commands for better server lifecycle management
+- **Chat Sync Control**: Pause and resume chat sync monitoring without disconnecting from mobile app
+- **Clean Operation**: Extension now runs silently, logging only actual errors
+- **Bug Fixes**: Fixed TypeScript compilation errors and WebSocket type assertions
+- **Better Development Experience**: Fixed F5 debugging to keep all extensions enabled (including GitHub Copilot)
+
+## [1.2.6] - 2026-02-03
+
+### Performance & Stability
+- **Major Performance Boost**: Removed 259,200+ unnecessary logs per day, significantly improving memory usage and responsiveness
+- **Chat Sync Optimization**: Reduced sync cycle time from 1.3s to 0.8s using hash-based change detection
+- **Server Control Commands**: Added stop/pause and resume commands for better server lifecycle management
+- **Chat Sync Control**: Pause and resume chat sync monitoring without disconnecting from mobile app
+- **Clean Operation**: Extension now runs silently, logging only actual errors
+- **Bug Fixes**: Fixed TypeScript compilation errors and WebSocket type assertions
+- **Better Development Experience**: Fixed F5 debugging to keep all extensions enabled (including GitHub Copilot)
+
 ## [1.2.5] - 2025-09-18
 
 ### 🚀 Mobile App Integration & API Server Improvements
