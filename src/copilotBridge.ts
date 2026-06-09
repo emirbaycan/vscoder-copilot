@@ -2045,11 +2045,12 @@ export class CopilotBridge {
             clearInterval((this as any).chatSyncInterval);
             (this as any).chatSyncInterval = null;
         }
-        
+
+        (this as any).chatSyncActive = true;
         const syncInterval = 5000;
         let lastChatContent = '';
         let lastChatHash = 0;
-        
+
         const quickHash = (str: string): number => {
             let hash = 0;
             for (let i = 0; i < str.length; i++) {
@@ -2058,13 +2059,15 @@ export class CopilotBridge {
             }
             return hash;
         };
-        
+
         const syncHistory = async () => {
+            if (!(this as any).chatSyncActive) {
+                return;
+            }
             try {
-                // Quick focus check - if chat isn't visible, skip expensive operations
                 try {
-                    await vscode.commands.executeCommand('workbench.panel.chat.view.copilot.focus');
-                    await new Promise(resolve => setTimeout(resolve, 200));
+                    await vscode.commands.executeCommand('workbench.action.chat.copyAll');
+                    await new Promise(resolve => setTimeout(resolve, 500));
                 } catch (focusError) {
                     return;
                 }
@@ -2116,6 +2119,7 @@ export class CopilotBridge {
      * Stop continuous chat history synchronization
      */
     public stopChatHistorySync(): void {
+        (this as any).chatSyncActive = false;
         if ((this as any).chatSyncInterval) {
             clearInterval((this as any).chatSyncInterval);
             (this as any).chatSyncInterval = null;

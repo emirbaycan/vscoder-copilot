@@ -4,7 +4,7 @@ Transform your smartphone into an intelligent coding companion! VSCoder brings G
 
 **Perfect for:** Code reviews on commute • Quick fixes from anywhere • AI-assisted mobile coding • Remote development workflows
 
-> **🎉 Latest Update (v1.2.6)**: Fixed critical WebSocket connection issue when switching profiles - mobile app now properly closes old connections before creating new ones, preventing zombie connections and ensuring commands reach the correct VS Code instance!
+> **🎉 Latest Update (v1.2.7)**: Fixed critical WebSocket connection issue when switching profiles - mobile app now properly closes old connections before creating new ones, preventing zombie connections and ensuring commands reach the correct VS Code instance!
 
 ## ✨ What Makes VSCoder Special
 
